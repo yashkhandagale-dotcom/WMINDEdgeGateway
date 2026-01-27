@@ -3,16 +3,33 @@ using System.Net.Http;
 using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
 using WMINDEdgeGateway.Infrastructure.Services;
+using Microsoft.Extensions.Configuration;
+
 
 Console.WriteLine("Edge Gateway Console App Starting...");
 
+var configuration = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .Build();
 
-string gatewayClientId = "GW-ac251c7e979a4011879b7ac95f68c89d";
-string gatewayClientSecret = "v9VJfrIQeceskTl4Snur9gn9BO8GZcdTK/M6HT0FeCc=";
+string gatewayClientId =
+    configuration["Gateway:ClientId"]
+    ?? throw new Exception("Missing Gateway:ClientId");
+
+string gatewayClientSecret =
+    configuration["Gateway:ClientSecret"]
+    ?? throw new Exception("Missing Gateway:ClientSecret");
+
+string authBaseUrl =
+    configuration["Services:AuthBaseUrl"]
+    ?? throw new Exception("Missing Services:AuthBaseUrl");
+
+string deviceApiBaseUrl =
+    configuration["Services:DeviceApiBaseUrl"]
+    ?? throw new Exception("Missing Services:DeviceApiBaseUrl");
 
 
-string authBaseUrl = "http://localhost:5000";       
-string deviceApiBaseUrl = "http://localhost:5000";
 
 var authHttp = new HttpClient { BaseAddress = new Uri(authBaseUrl) };
 var deviceHttp = new HttpClient { BaseAddress = new Uri(deviceApiBaseUrl) };
@@ -40,6 +57,8 @@ try
 
             cache.Set("DeviceConfigurations", configs, TimeSpan.FromMinutes(30));
             Console.WriteLine("Configurations cached in memory");
+            cache.PrintCache();
+
         }
         catch (HttpRequestException httpEx)
         {
