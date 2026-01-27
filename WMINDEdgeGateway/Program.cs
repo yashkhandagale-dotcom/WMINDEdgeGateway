@@ -7,8 +7,8 @@ using WMINDEdgeGateway.Infrastructure.Services;
 Console.WriteLine("Edge Gateway Console App Starting...");
 
 
-string gatewayClientId = "GW-ac251c7e979a4011879b7ac95f68c89d";
-string gatewayClientSecret = "v9VJfrIQeceskTl4Snur9gn9BO8GZcdTK/M6HT0FeCc=";
+string gatewayClientId = "GW-8c96595a802a40ccb80a0a6f480638d6";
+string gatewayClientSecret = "mgdk9LpTvPHNvvMpD6Oys7TkUCj8Q4qFnjdruVDDPnY=";
 
 
 string authBaseUrl = "http://localhost:5000";       

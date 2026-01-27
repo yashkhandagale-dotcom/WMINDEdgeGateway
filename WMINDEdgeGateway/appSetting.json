@@ -1,0 +1,17 @@
+{
+    "M2M": {
+        "ClientId": "my-client-id",
+        "ClientSecret": "my-client-secret",
+        "TokenUrl": "https://authserver.com/oauth/token",
+        "ApiUrl": "https://cloudapp.com/api/telemetry",
+        "ConfigUrl": "https://cloudapp.com/api/deviceConfigs"
+    },
+    "exclude": [
+        "**/bin",
+        "**/bower_components",
+        "**/jspm_packages",
+        "**/node_modules",
+        "**/obj",
+        "**/platforms"
+    ]
+}
