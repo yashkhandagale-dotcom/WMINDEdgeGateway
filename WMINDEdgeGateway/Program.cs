@@ -1,64 +1,100 @@
-﻿using System;
-using System.Net.Http;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
 using WMINDEdgeGateway.Infrastructure.Services;
 
-Console.WriteLine("Edge Gateway Console App Starting...");
+Console.WriteLine("Edge Gateway Starting...");
 
-
-string gatewayClientId = "GW-ac251c7e979a4011879b7ac95f68c89d";
-string gatewayClientSecret = "v9VJfrIQeceskTl4Snur9gn9BO8GZcdTK/M6HT0FeCc=";
-
-
-string authBaseUrl = "http://localhost:5000";       
-string deviceApiBaseUrl = "http://localhost:5000";
-
-var authHttp = new HttpClient { BaseAddress = new Uri(authBaseUrl) };
-var deviceHttp = new HttpClient { BaseAddress = new Uri(deviceApiBaseUrl) };
-
-IAuthClient authClient = new AuthClient(authHttp);
-IDeviceServiceClient deviceClient = new DeviceServiceClient(deviceHttp);
-var cache = new MemoryCacheService();
-
-try
-{
-    var tokenResponse = await authClient.GetTokenAsync(gatewayClientId, gatewayClientSecret);
-    if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
+var host = Host.CreateDefaultBuilder(args)
+    .ConfigureAppConfiguration(config =>
     {
-        Console.WriteLine("Error: Failed to retrieve a valid token from the auth service.");
-    }
-    else
+        config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+    })
+    .ConfigureServices((context, services) =>
     {
-        string token = tokenResponse.AccessToken;
-        Console.WriteLine($"Token received: {token}");
+        // HttpClients
+        services.AddHttpClient("AuthClient", c =>
+        {
+            var baseUrl = context.Configuration["Auth:BaseUrl"];
+            if (!string.IsNullOrEmpty(baseUrl))
+                c.BaseAddress = new Uri(baseUrl);
+        });
 
-        try
+        services.AddHttpClient("DeviceClient", c =>
         {
-            var configs = await deviceClient.GetConfigurationsAsync(gatewayClientId, token);
-            Console.WriteLine($"Fetched {configs.Length} configurations");
+            var baseUrl = context.Configuration["DeviceApi:BaseUrl"];
+            if (!string.IsNullOrEmpty(baseUrl))
+                c.BaseAddress = new Uri(baseUrl);
+        });
 
-            cache.Set("DeviceConfigurations", configs, TimeSpan.FromMinutes(30));
-            Console.WriteLine("Configurations cached in memory");
-        }
-        catch (HttpRequestException httpEx)
-        {
-            Console.WriteLine($"HTTP error while fetching device configurations: {httpEx.Message}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Unexpected error while fetching device configurations: {ex.Message}");
-        }
-    }
-}
-catch (HttpRequestException httpEx)
-{
-    Console.WriteLine($"HTTP error while fetching token: {httpEx.Message}");
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"Unexpected error while fetching token: {ex.Message}");
-}
+        // Services
+        services.AddSingleton<IAuthClient, AuthClient>();
+        services.AddSingleton<IDeviceServiceClient, DeviceServiceClient>();
+        services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
+
+        // Options
+        services.Configure<GatewayOptions>(context.Configuration.GetSection("Gateway"));
+        services.Configure<CacheOptions>(context.Configuration.GetSection("Cache"));
+    })
+    .Build();
+
+// Resolve services
+using var scope = host.Services.CreateScope();
+var services = scope.ServiceProvider;
+
+var gatewayOptions = services.GetRequiredService<IOptions<GatewayOptions>>().Value;
+var cacheOptions = services.GetRequiredService<IOptions<CacheOptions>>().Value;
+
+var authClient = services.GetRequiredService<IAuthClient>();
+var deviceClient = services.GetRequiredService<IDeviceServiceClient>();
+var cache = services.GetRequiredService<IMemoryCacheService>();
+
+// Run gateway once
+await RunGatewayOnceAsync(authClient, deviceClient, cache, gatewayOptions, cacheOptions);
 
 Console.WriteLine("Press any key to exit...");
 Console.ReadKey();
+
+
+// ============================
+// Gateway Execution Logic (Single Fetch)
+// ============================
+static async Task RunGatewayOnceAsync(
+    IAuthClient authClient,
+    IDeviceServiceClient deviceClient,
+    IMemoryCacheService cache,
+    GatewayOptions gatewayOptions,
+    CacheOptions cacheOptions)
+{
+    try
+    {
+        // Get token
+        Console.WriteLine("Getting token...");
+        var tokenResponse = await authClient.GetTokenAsync(
+            gatewayOptions.ClientId,
+            gatewayOptions.ClientSecret
+        );
+        string token = tokenResponse.AccessToken;
+        Console.WriteLine("Token acquired.");
+
+        // Fetch device configurations
+        var configs = await deviceClient.GetConfigurationsAsync(
+            gatewayOptions.ClientId,
+            token
+        );
+
+        // Cache the configurations
+        cache.Set("DeviceConfigurations", configs, TimeSpan.FromMinutes(cacheOptions.ConfigurationsMinutes));
+        Console.WriteLine($"Fetched and cached {configs.Length} configurations.");
+
+        // Print cached devices
+        cache.PrintCache();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error: {ex.Message}");
+    }
+}

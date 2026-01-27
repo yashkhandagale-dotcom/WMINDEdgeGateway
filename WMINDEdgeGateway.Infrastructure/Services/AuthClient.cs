@@ -1,47 +1,39 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Net.Http.Json;
-using System.Text.Json.Serialization;
-using System.Threading.Tasks;
+﻿using System.Net.Http.Json;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
+using Microsoft.Extensions.Options;
+using System.Net.Http;
+using System.Net.Http.Headers;
+
+
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
     public class AuthClient : IAuthClient
     {
-        private readonly HttpClient _http;
+        private readonly IHttpClientFactory _factory;
 
-        public AuthClient(HttpClient http)
-        {
-            _http = http ?? throw new ArgumentNullException(nameof(http));
-        }
+        public AuthClient(IHttpClientFactory factory) => _factory = factory;
 
         public async Task<AuthTokenResponse> GetTokenAsync(string clientId, string clientSecret)
         {
-            if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
-                throw new ArgumentException("ClientId or ClientSecret cannot be empty");
+            var http = _factory.CreateClient("AuthClient");
 
             var form = new Dictionary<string, string>
-            {
-                { "client_id", clientId },
-                { "client_secret", clientSecret }
-            };
+    {
+        { "client_id", clientId },
+        { "client_secret", clientSecret }
+    };
 
-            var response = await _http.PostAsync("api/devices/connect/token", new FormUrlEncodedContent(form));
-
-            var content = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"Auth service status: {response.StatusCode}");
-            Console.WriteLine($"Auth service response: {content}");
+            var response = await http.PostAsync("api/devices/connect/token", new FormUrlEncodedContent(form));
 
             response.EnsureSuccessStatusCode();
 
-            var token = await response.Content.ReadFromJsonAsync<AuthTokenResponse>();
+            var tokenResponse = await response.Content.ReadFromJsonAsync<AuthTokenResponse>();
+            if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
+                throw new Exception("Failed to retrieve a valid token");
 
-            if (token == null || string.IsNullOrEmpty(token.AccessToken))
-                throw new Exception("Failed to retrieve a valid token from the auth service");
-
-            return token;
+            return tokenResponse; // Return AuthTokenResponse object, not string
         }
+
     }
 }
