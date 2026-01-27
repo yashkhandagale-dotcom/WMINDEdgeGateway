@@ -69,16 +69,22 @@ static async Task RunGatewayOnceAsync(
     GatewayOptions gatewayOptions,
     CacheOptions cacheOptions)
 {
+    string token = null;
+
     try
     {
-        // Get token
-        Console.WriteLine("Getting token...");
-        var tokenResponse = await authClient.GetTokenAsync(
-            gatewayOptions.ClientId,
-            gatewayOptions.ClientSecret
-        );
-        string token = tokenResponse.AccessToken;
-        Console.WriteLine("Token acquired.");
+        // If token is empty → get token
+        if (string.IsNullOrEmpty(token))
+        {
+            Console.WriteLine("Getting token...");
+            var tokenResponse = await authClient.GetTokenAsync(
+                gatewayOptions.ClientId,
+                gatewayOptions.ClientSecret
+            );
+
+            token = tokenResponse.AccessToken;
+            Console.WriteLine("Token acquired.");
+        }
 
         // Fetch device configurations
         var configs = await deviceClient.GetConfigurationsAsync(
@@ -86,11 +92,35 @@ static async Task RunGatewayOnceAsync(
             token
         );
 
-        // Cache the configurations
+        // Cache configurations
         cache.Set("DeviceConfigurations", configs, TimeSpan.FromMinutes(cacheOptions.ConfigurationsMinutes));
+
         Console.WriteLine($"Fetched and cached {configs.Length} configurations.");
 
-        // Print cached devices
+        // Print cache
+        cache.PrintCache();
+    }
+    catch (HttpRequestException ex) when (ex.Message.Contains("401"))
+    {
+        Console.WriteLine("⚠️ Token expired. Refreshing token...");
+
+        var newTokenResponse = await authClient.GetTokenAsync(
+            gatewayOptions.ClientId,
+            gatewayOptions.ClientSecret
+        );
+
+        token = newTokenResponse.AccessToken;
+        Console.WriteLine("New token acquired.");
+
+        var configs = await deviceClient.GetConfigurationsAsync(
+            gatewayOptions.ClientId,
+            token
+        );
+
+        cache.Set("DeviceConfigurations", configs, TimeSpan.FromMinutes(cacheOptions.ConfigurationsMinutes));
+
+        Console.WriteLine($"Fetched and cached {configs.Length} configurations after refresh.");
+
         cache.PrintCache();
     }
     catch (Exception ex)
