@@ -252,8 +252,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                         lock (_consoleLock)
                         {
-                            Console.WriteLine($"[{device.DeviceName}] Voltage: {value:F2}V");
-                        }
+                            string unit = string.IsNullOrWhiteSpace(item.Register.Unit) ? "" : item.Register.Unit;
+                            Console.WriteLine($"[{device.DeviceName}] Register {item.Register.RegisterAddress}: {value:F2}{unit}");}
                     }
                 }
             }
