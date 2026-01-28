@@ -27,29 +27,12 @@ namespace WMINDEdgeGateway.Application.DTOs
         [property: JsonPropertyName("isHealthy")] bool IsHealthy
     );
 
-    public record OpcSignalDto(
-        [property: JsonPropertyName("signalId")] Guid SignalId,
-        [property: JsonPropertyName("signalName")] string SignalName,
-        [property: JsonPropertyName("nodeId")] string NodeId,
-        [property: JsonPropertyName("dataType")] string DataType,
-        [property: JsonPropertyName("scale")] double Scale,
-        [property: JsonPropertyName("unit")] string? Unit,
-        [property: JsonPropertyName("isHealthy")] bool IsHealthy
-    );
-
-
     public record DeviceSlaveDto(
         [property: JsonPropertyName("deviceSlaveId")] Guid DeviceSlaveId,
         [property: JsonPropertyName("slaveIndex")] int SlaveIndex,
         [property: JsonPropertyName("isHealthy")] bool IsHealthy,
-
-    // Modbus
-        [property: JsonPropertyName("registers")] DeviceRegisterDto[]? Registers,
-
-    // OPC UA
-        [property: JsonPropertyName("signals")] OpcSignalDto[]? Signals
+        [property: JsonPropertyName("registers")] DeviceRegisterDto[] Registers
     );
-
 
     public record DeviceConfigurationDto(
         [property: JsonPropertyName("deviceId")] Guid Id,
