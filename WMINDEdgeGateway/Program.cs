@@ -16,9 +16,7 @@ var host = Host.CreateDefaultBuilder(args)
     {
         IConfiguration configuration = context.Configuration;
 
-        // -----------------------------
-        // AUTH CLIENT
-        // -----------------------------
+    
         services.AddSingleton<IAuthClient>(sp =>
         {
             var http = new HttpClient
@@ -28,9 +26,7 @@ var host = Host.CreateDefaultBuilder(args)
             return new AuthClient(http);
         });
 
-        // -----------------------------
-        // TOKEN SERVICE
-        // -----------------------------
+   
         services.AddSingleton<TokenService>(sp =>
         {
             var authClient = sp.GetRequiredService<IAuthClient>();
@@ -40,9 +36,7 @@ var host = Host.CreateDefaultBuilder(args)
             return new TokenService(authClient, memoryCache, clientId, clientSecret);
         });
 
-        // -----------------------------
-        // DEVICE SERVICE CLIENT
-        // -----------------------------
+     
         services.AddSingleton<IDeviceServiceClient>(sp =>
         {
             var http = new HttpClient
@@ -53,27 +47,20 @@ var host = Host.CreateDefaultBuilder(args)
             return new DeviceServiceClient(http, tokenService);
         });
 
-        // -----------------------------
-        // MEMORY CACHE
-        // -----------------------------
+       
         services.AddMemoryCache();
         services.AddSingleton<MemoryCacheService>();
 
-        // -----------------------------
-        // INFLUXDB CLIENT
-        // -----------------------------
+  
         services.AddSingleton(sp =>
         {
             var url = configuration["InfluxDB:Url"] ?? "http://localhost:8086";
             var token = configuration["InfluxDB:Token"] ?? "my-token";
 
-            // NEW: token is string, no ToCharArray()
             return new InfluxDBClient(url, token);
         });
 
-        // -----------------------------
-        // MODBUS POLLER BACKGROUND SERVICE
-        // -----------------------------
+        
         services.AddHostedService<ModbusPollerHostedService>();
     })
     .ConfigureLogging(logging =>
@@ -83,19 +70,13 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .Build();
 
-// ---------------------------------
-// INITIALIZE CACHE BEFORE HOST START
-// ---------------------------------
+
 await InitializeCacheAsync(host.Services);
 
-// ---------------------------------
-// START HOST
-// ---------------------------------
+
 await host.RunAsync();
 
-// ---------------------------------
-// HELPER METHOD
-// ---------------------------------
+
 async Task InitializeCacheAsync(IServiceProvider services)
 {
     var tokenService = services.GetRequiredService<TokenService>();
