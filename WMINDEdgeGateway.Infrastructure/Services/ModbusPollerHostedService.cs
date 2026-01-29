@@ -13,17 +13,17 @@ using System.Threading;
 using System.Threading.Tasks;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Infrastructure.Caching;
+using InfluxDB.Client;
+using InfluxDB.Client.Api.Domain;
+using InfluxDB.Client.Writes;
+
+
+
 
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
-    /// <summary>
-    /// Background service that polls Modbus TCP devices using cached configuration.
-    /// Gets device data from cache, polls modbus devices, and prints telemetry to console.
-    /// This class preserves original behavior: grouping ranges, float fallback,
-    /// failure counting, console buffered printing, and printing telemetry only.
-    /// Additionally it bounds concurrent device connections using _semaphore.
-    /// </summary>
+
     public class ModbusPollerHostedService : BackgroundService
     {
         private readonly ILogger<ModbusPollerHostedService> _log;
@@ -46,15 +46,22 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
         private readonly int _failThreshold;
+        private readonly InfluxDBClient _influxClient;
+        private readonly string _bucket;
+        private readonly string _org;
 
 
         public ModbusPollerHostedService(ILogger<ModbusPollerHostedService> log,
                                          IConfiguration config,
-                                         MemoryCacheService cache)
+                                         MemoryCacheService cache,
+                                         InfluxDBClient influxClient)
         {
             _log = log;
             _config = config;
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+            _influxClient = influxClient;
+            _bucket = config["InfluxDB:Bucket"] ?? "EdgeData";
+            _org = config["InfluxDB:Org"] ?? "WMIND";
 
 
             // read failure threshold and concurrency limit from configuration
@@ -79,7 +86,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 {
                     try
                     {
-                        // load current device configurations from cache
                         var deviceConfigs = _cache.Get<List<DeviceConfigurationDto>>("DeviceConfigurations");
 
 
@@ -91,7 +97,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         }
 
 
-                        // start a long-running loop task for each device if not already running
                         foreach (var config in deviceConfigs)
                         {
                             if (_deviceTasks.ContainsKey(config.Id)) continue;
@@ -102,7 +107,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                             _deviceTasks.TryAdd(config.Id, task);
 
 
-                            // cleanup completed tasks (non-blocking)
                             var completed = _deviceTasks.Where(kvp => kvp.Value.IsCompleted).Select(kvp => kvp.Key).ToList();
                             foreach (var k in completed) _deviceTasks.TryRemove(k, out _);
                         }
@@ -113,28 +117,22 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     }
 
 
-                    // small delay before scanning cache again for new/removed devices
                     await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
                 }
             }
             finally
             {
-                // attempt graceful shutdown of device loops
                 try
                 {
                     await Task.WhenAll(_deviceTasks.Values.ToArray());
                 }
                 catch
                 {
-                    // ignore exceptions during shutdown
                 }
             }
         }
 
 
-        /// <summary>
-        /// Per-device loop. Calls PollSingleDeviceOnceAsync repeatedly and delays based on returned poll interval.
-        /// </summary>
         private async Task PollLoopForDeviceAsync(DeviceConfigurationDto deviceConfig, CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
@@ -175,19 +173,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         }
 
 
-        /// <summary>
-        /// Performs a single poll for the given device and returns the device's poll interval in milliseconds.
-        /// All original behaviors are preserved:
-        /// - parse ProtocolSettingsJson,
-        /// - normalize addresses,
-        /// - group ranges up to 125 registers,
-        /// - decode float32 + fallback,
-        /// - failure counting,
-        /// - buffered console output (atomic),
-        /// - print telemetry to console only.
-        /// Additionally this method uses _semaphore to bound concurrency around the network I/O.
-        /// Gets device data from cache.
-        /// </summary>
+       
         private async Task<int> PollSingleDeviceOnceAsync(DeviceConfigurationDto deviceConfig, CancellationToken ct)
         {
             if (deviceConfig == null || deviceConfig.slaves == null || !deviceConfig.slaves.Any())
@@ -198,7 +184,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
             JsonDocument settings;
-            // try { settings = JsonDocument.Parse(deviceConfig.configurationJson ?? "{\"IpAddress\":\"10.10.10.17\",\"Port\":5020,\"SlaveId\":1,\"Endian\":\"Little\"}"); }
             try { settings = JsonDocument.Parse("{\"IpAddress\":\"127.0.0.1\",\"Port\":5020,\"SlaveId\":1,\"Endian\":\"Little\"}"); }
             catch (Exception ex)
             {
@@ -207,10 +192,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             }
 
 
-            // read settings strictly from ProtocolSettingsJson (no device.Host/device.Port fallback)
             var ip = TryGetString(settings, "IpAddress");
-            var port = TryGetInt(settings, "Port", 502); // default Modbus TCP port is 502
-            var slaveIdFromConfig = TryGetInt(settings, "SlaveId", 1); // kept as fallback if no DeviceSlave entry
+            var port = TryGetInt(settings, "Port", 502); 
+            var slaveIdFromConfig = TryGetInt(settings, "SlaveId", 1); 
             var endian = TryGetString(settings, "Endian") ?? "Big";
             var pollIntervalMs = TryGetInt(settings, "PollIntervalMs", deviceConfig.pollIntervalMs > 0 ? deviceConfig.pollIntervalMs : 1000);
             var addressStyleCfg = TryGetString(settings, "AddressStyle");
@@ -223,11 +207,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             }
 
 
-            // Load device slaves and their registers from cached configuration
             var slaves = deviceConfig.slaves;
 
 
-            // Flatten registers from slaves
             var activeRegisters = slaves
                 .SelectMany(ds => ds.registers != null ? ds.registers.Select(r => new { DeviceSlave = ds, Register = r }) : Enumerable.Empty<dynamic>())
                 .ToList();
@@ -244,7 +226,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
             bool dbUses40001 = false;
-            // checking address style, if 1-based or zero-based
             if (!string.IsNullOrEmpty(addressStyleCfg))
                 dbUses40001 = string.Equals(addressStyleCfg, "40001", StringComparison.OrdinalIgnoreCase);
             else
@@ -253,19 +234,17 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             int ToProto(int dbAddr)
             {
-                // modbus expects zero-based addresses; normalize
                 if (dbUses40001) return dbAddr - 40001;
                 if (dbAddr > 0 && dbAddr < 40001) return dbAddr - 1;
                 return dbAddr;
             }
 
 
-            // Map registers to protocol addresses and lengths (preserve link to DeviceSlave)
             var protoPorts = activeRegisters.Select(x => new
             {
                 DeviceSlave = x.DeviceSlave,
                 Register = x.Register,
-                ProtoAddr = ToProto(x.Register.registerAddress), // zero-based address
+                ProtoAddr = ToProto(x.Register.registerAddress), 
                 Length = Math.Max(1, x.Register.registerLength)
             })
             .OrderBy(x => x.ProtoAddr)
@@ -278,46 +257,36 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 return pollIntervalMs;
             }
 
-
-            // Acquire semaphore to limit concurrent network connections/polls.
-            // This ensures we don't overload network/DB/CPU when many device loops run.
            
-            await _semaphore.WaitAsync(ct);  // this basically used to controll the concurrent access.
+            await _semaphore.WaitAsync(ct); 
             //----
             try
             {
-                // Connect to device TCP with a short timeout
                 using var tcp = new TcpClient();
                 using var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                // Link tokens so cancelling the overall loop cancels connect
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, connectCts.Token);
 
 
                 await tcp.ConnectAsync(ip, port, linked.Token);
 
 
-                // Using in-repo ModbusTcpClient helper to avoid NModbus4 dependency
 
 
                 var now = DateTime.UtcNow;
-                // tuple: (deviceSlaveId, slaveIndex, SignalType, Value, Unit, RegisterAddress)
                 var allReads = new List<(Guid deviceSlaveId, int slaveIndex, string SignalType, double Value, string Unit, int RegisterAddress)>();
 
 
-                // --- Group protoPorts by slaveIndex (unit id) so we never mix different slaves in one request ---
                 var protoGroups = protoPorts
                     .GroupBy(x => ((dynamic)x.DeviceSlave).slaveIndex)
                     .ToDictionary(g => g.Key, g => g.OrderBy(p => p.ProtoAddr).ToList());
 
 
-                // For each slave (unit id) build contiguous ranges and read separately
                 foreach (var kv in protoGroups)
                 {
-                    int unitId = kv.Key; // the slaveIndex/unit id to use for Modbus requests
-                    var itemsForSlave = kv.Value; // ordered by ProtoAddr
+                    int unitId = kv.Key; 
+                    var itemsForSlave = kv.Value; 
 
 
-                    // Build ranges for this slave alone (each up to ModbusMaxRegistersPerRead)
                     var slaveRanges = new List<(int Start, int Count, List<dynamic> Items)>();
                     int j = 0;
                     while (j < itemsForSlave.Count)
@@ -526,57 +495,45 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         }
 
 
-                        //-----
                     }
                 }
 
 
-                // Print telemetry data to console (no DB save)
-                if (allReads.Count > 0)
-                {
-                    try
-                    {
-                        var telemetryData = allReads.Select(r => new
-                        {
-                            DeviceId = deviceConfig.Id,
-                            DeviceSlaveId = r.deviceSlaveId,
-                            SlaveIndex = r.slaveIndex,
-                            RegisterAddress = r.RegisterAddress,
-                            SignalType = r.SignalType,
-                            Value = r.Value,
-                            Unit = r.Unit,
-                            Timestamp = DateTime.Now
-                        }).ToList();
+if (allReads.Count > 0)
+{
+    try
+    {
+        var points = allReads.Select(r =>
+            PointData.Measurement("modbus_telemetry")
+                .Tag("deviceId", deviceConfig.Id.ToString())
+                .Tag("deviceSlaveId", r.deviceSlaveId.ToString())
+                .Tag("slaveIndex", r.slaveIndex.ToString())
+                .Tag("dataType", r.SignalType)
+                .Field("value", r.Value)
+                .Field("registerAddress", r.RegisterAddress)
+                .Field("unit", r.Unit ?? string.Empty)
+                .Timestamp(DateTime.UtcNow, WritePrecision.Ns)
+        ).ToList();
 
+        var writeApi = _influxClient.GetWriteApiAsync();
 
-                        if (telemetryData.Any())
-                        {
-                            // Just print the data
-                            foreach (var data in telemetryData)
-                            {
-                                lock (_consoleLock)
-                                {
-                                    Console.WriteLine($"[TELEMETRY] Device: {data.DeviceId}, Slave: {data.SlaveIndex}, Register: {data.RegisterAddress}, Value: {data.Value} {data.Unit}");
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Failed to prepare telemetry for device {Device}", deviceConfig.Id);
-                    }
+        await writeApi.WritePointsAsync(points, _bucket, _org);
 
+        _log.LogInformation("Written {Count} points to InfluxDB for device {Device}", points.Count, deviceConfig.Id);
+    }
+    catch (Exception ex)
+    {
+        _log.LogError(ex, "Failed to write telemetry to InfluxDB for device {Device}", deviceConfig.Id);
+    }
+}
+}
 
-                    _log.LogDebug("Prepared {Count} telemetry rows for device {Device}", allReads.Count, deviceConfig.Id);
-                }
-            }
             catch (SocketException s_ex)
             {
                 _log.LogWarning(s_ex, "Device {Device} unreachable {Ip}:{Port}", deviceConfig.Id, ip, port);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // polling was cancelled via token, simply return
                 _log.LogDebug("Polling cancelled for device {Device}", deviceConfig.Id);
             }
             catch (Exception ex)
@@ -585,7 +542,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             }
             finally
             {
-                // Always release the semaphore even on exceptions
                 _semaphore.Release();
             }
 
@@ -598,7 +554,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
            
            
            
-            // Return the poll interval (ms) for next loop delay
             return pollIntervalMs;
         }
 
