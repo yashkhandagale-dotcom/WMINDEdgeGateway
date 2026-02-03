@@ -184,7 +184,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
             JsonDocument settings;
-            try { settings = JsonDocument.Parse("{\"IpAddress\":\"127.0.0.1\",\"Port\":5020,\"SlaveId\":1,\"Endian\":\"Little\"}"); }
+            try { settings = JsonDocument.Parse(deviceConfig.configurationJson); }
             catch (Exception ex)
             {
                 _log.LogError(ex, "Invalid ProtocolSettingsJson for device {Device}", deviceConfig.Id);

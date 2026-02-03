@@ -62,6 +62,8 @@ var host = Host.CreateDefaultBuilder(args)
 
         
         services.AddHostedService<ModbusPollerHostedService>();
+        services.AddSingleton<RabbitMqProducerService>();
+        services.AddHostedService<InfluxToRabbitHostedService>();
     })
     .ConfigureLogging(logging =>
     {
