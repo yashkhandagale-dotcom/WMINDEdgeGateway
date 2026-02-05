@@ -62,6 +62,17 @@ var host = Host.CreateDefaultBuilder(args)
 
         
         services.AddHostedService<ModbusPollerHostedService>();
+        services.AddSingleton(sp =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+
+            return InfluxDBClientFactory.Create(
+                cfg["InfluxDB:Url"],
+                cfg["InfluxDB:Token"].ToCharArray());
+        });
+
+        services.AddHostedService<InfluxToRabbitHostedService>();
+
     })
     .ConfigureLogging(logging =>
     {
