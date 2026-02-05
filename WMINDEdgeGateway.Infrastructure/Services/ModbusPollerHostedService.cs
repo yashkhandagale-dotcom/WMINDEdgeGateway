@@ -1,3 +1,7 @@
+using InfluxDB.Client;
+using RabbitMQ.Client;
+using InfluxDB.Client.Api.Domain;
+using InfluxDB.Client.Writes;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -10,16 +14,10 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Infrastructure.Caching;
-using InfluxDB.Client;
-using InfluxDB.Client.Api.Domain;
-using InfluxDB.Client.Writes;
-
-
-
-
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
@@ -30,26 +28,25 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly IConfiguration _config;
         private readonly MemoryCacheService _cache;
 
-
         // Semaphore to limit concurrent TCP connections / modbus polls
         // value loaded from config or default 10
         private readonly SemaphoreSlim _semaphore;
-
 
         // failure counters and console lock (shared)
         private static readonly ConcurrentDictionary<Guid, int> _failureCounts = new();
         private static readonly object _consoleLock = new();
 
-
         // per-device loop tasks
         private readonly ConcurrentDictionary<Guid, Task> _deviceTasks = new();
-
 
         private readonly int _failThreshold;
         private readonly InfluxDBClient _influxClient;
         private readonly string _bucket;
         private readonly string _org;
-
+        private IConnection? _connection;
+        private readonly IModel? _channel;
+        private readonly string _exchange;
+        private readonly string _routingKey;
 
         public ModbusPollerHostedService(ILogger<ModbusPollerHostedService> log,
                                          IConfiguration config,
@@ -74,11 +71,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             _semaphore = new SemaphoreSlim(concurrency, concurrency);
         }
 
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _log.LogInformation("Modbus poller started (device-per-loop mode)");
-
 
             try
             {
@@ -131,8 +126,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 }
             }
         }
-
-
         private async Task PollLoopForDeviceAsync(DeviceConfigurationDto deviceConfig, CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
@@ -171,9 +164,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 }
             }
         }
-
-
-       
         private async Task<int> PollSingleDeviceOnceAsync(DeviceConfigurationDto deviceConfig, CancellationToken ct)
         {
             if (deviceConfig == null || deviceConfig.slaves == null || !deviceConfig.slaves.Any())
@@ -181,8 +171,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 _log.LogWarning("Device {DeviceId} has no slaves - skipping", deviceConfig?.Id);
                 return deviceConfig?.pollIntervalMs > 0 ? deviceConfig.pollIntervalMs : 1000;
             }
-
-
             JsonDocument settings;
             try { settings = JsonDocument.Parse(deviceConfig.configurationJson); }
             catch (Exception ex)
@@ -190,11 +178,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 _log.LogError(ex, "Invalid ProtocolSettingsJson for device {Device}", deviceConfig.Id);
                 return deviceConfig.pollIntervalMs > 0 ? deviceConfig.pollIntervalMs : 1000;
             }
-
-
             var ip = TryGetString(settings, "IpAddress");
-            var port = TryGetInt(settings, "Port", 502); 
-            var slaveIdFromConfig = TryGetInt(settings, "SlaveId", 1); 
+            var port = TryGetInt(settings, "Port", 502);
+            var slaveIdFromConfig = TryGetInt(settings, "SlaveId", 1);
             var endian = TryGetString(settings, "Endian") ?? "Big";
             var pollIntervalMs = TryGetInt(settings, "PollIntervalMs", deviceConfig.pollIntervalMs > 0 ? deviceConfig.pollIntervalMs : 1000);
             var addressStyleCfg = TryGetString(settings, "AddressStyle");
@@ -205,8 +191,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 _log.LogWarning("Device {DeviceId} ProtocolSettingsJson missing IpAddress. Skipping poll.", deviceConfig.Id);
                 return pollIntervalMs;
             }
-
-
             var slaves = deviceConfig.slaves;
 
 
@@ -244,7 +228,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             {
                 DeviceSlave = x.DeviceSlave,
                 Register = x.Register,
-                ProtoAddr = ToProto(x.Register.registerAddress), 
+                ProtoAddr = ToProto(x.Register.registerAddress),
                 Length = Math.Max(1, x.Register.registerLength)
             })
             .OrderBy(x => x.ProtoAddr)
@@ -257,8 +241,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 return pollIntervalMs;
             }
 
-           
-            await _semaphore.WaitAsync(ct); 
+
+            await _semaphore.WaitAsync(ct);
             //----
             try
             {
@@ -268,9 +252,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
                 await tcp.ConnectAsync(ip, port, linked.Token);
-
-
-
 
                 var now = DateTime.UtcNow;
                 var allReads = new List<(Guid deviceSlaveId, int slaveIndex, string SignalType, double Value, string Unit, int RegisterAddress)>();
@@ -283,8 +264,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                 foreach (var kv in protoGroups)
                 {
-                    int unitId = kv.Key; 
-                    var itemsForSlave = kv.Value; 
+                    int unitId = kv.Key;
+                    var itemsForSlave = kv.Value;
 
 
                     var slaveRanges = new List<(int Start, int Count, List<dynamic> Items)>();
@@ -499,34 +480,34 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 }
 
 
-if (allReads.Count > 0)
-{
-    try
-    {
-        var points = allReads.Select(r =>
-            PointData.Measurement("modbus_telemetry")
-                .Tag("deviceId", deviceConfig.Id.ToString())
-                .Tag("deviceSlaveId", r.deviceSlaveId.ToString())
-                .Tag("slaveIndex", r.slaveIndex.ToString())
-                .Tag("dataType", r.SignalType)
-                .Field("value", r.Value)
-                .Field("registerAddress", r.RegisterAddress)
-                .Field("unit", r.Unit ?? string.Empty)
-                .Timestamp(DateTime.UtcNow, WritePrecision.Ns)
-        ).ToList();
+                if (allReads.Count > 0)
+                {
+                    try
+                    {
+                        var points = allReads.Select(r =>
+                            PointData.Measurement("modbus_telemetry")
+                                .Tag("deviceId", deviceConfig.Id.ToString())
+                                .Tag("deviceSlaveId", r.deviceSlaveId.ToString())
+                                .Tag("slaveIndex", r.slaveIndex.ToString())
+                                .Tag("dataType", r.SignalType)
+                                .Field("value", r.Value)
+                                .Tag("registerAddress", r.RegisterAddress.ToString())
+                                .Tag("unit", r.Unit ?? string.Empty)
+                                .Timestamp(DateTime.UtcNow, WritePrecision.Ns)
+                        ).ToList();
 
-        var writeApi = _influxClient.GetWriteApiAsync();
+                        var writeApi = _influxClient.GetWriteApiAsync();
 
-        await writeApi.WritePointsAsync(points, _bucket, _org);
+                        await writeApi.WritePointsAsync(points, _bucket, _org);
 
-        _log.LogInformation("Written {Count} points to InfluxDB for device {Device}", points.Count, deviceConfig.Id);
-    }
-    catch (Exception ex)
-    {
-        _log.LogError(ex, "Failed to write telemetry to InfluxDB for device {Device}", deviceConfig.Id);
-    }
-}
-}
+                        _log.LogInformation("Written {Count} points to InfluxDB for device {Device}", points.Count, deviceConfig.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogError(ex, "Failed to write telemetry to InfluxDB for device {Device}", deviceConfig.Id);
+                    }
+                }
+            }
 
             catch (SocketException s_ex)
             {
@@ -544,19 +525,8 @@ if (allReads.Count > 0)
             {
                 _semaphore.Release();
             }
-
-
-           
-           
-           
-           
-           
-           
-           
-           
             return pollIntervalMs;
         }
-
 
         private static string? TryGetString(JsonDocument doc, string propName)
         {
@@ -572,4 +542,3 @@ if (allReads.Count > 0)
         }
     }
 }
-
