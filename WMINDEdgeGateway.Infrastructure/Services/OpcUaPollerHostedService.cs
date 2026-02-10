@@ -1,213 +1,161 @@
-// using Microsoft.Extensions.Hosting;
-// using Microsoft.Extensions.Logging;
-// using Microsoft.Extensions.Configuration;
-// using Microsoft.Extensions.Caching.Memory;
-// using Opc.Ua;
-// using Opc.Ua.Client;
-// using Opc.Ua.Configuration;
-// using System;
-// using System.Collections.Generic;
-// using System.Linq;
-// using System.Threading;
-// using System.Threading.Tasks;
-// using WMINDEdgeGateway.Application.DTOs;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Opc.Ua;
+using Opc.Ua.Client;
+using Opc.Ua.Configuration;
 
-// namespace WMINDEdgeGateway.Infrastructure.Services
-// {
-//     public class OpcUaPollerHostedService : BackgroundService
-//     {
-//         private readonly ILogger<OpcUaPollerHostedService> _logger;
-//         private readonly IConfiguration _config;
-//         private readonly IMemoryCache _cache;
+namespace WMINDEdgeGateway.Infrastructure.Services;
 
-//         private Session? _session;
+public class OpcUaPollerHostedService : BackgroundService
+{
+    private readonly ILogger<OpcUaPollerHostedService> _logger;
+    private Session? _session;
 
-//         public OpcUaPollerHostedService(
-//             ILogger<OpcUaPollerHostedService> logger,
-//             IConfiguration config,
-//             IMemoryCache cache)
-//         {
-//             _logger = logger;
-//             _config = config;
-//             _cache = cache;
-//         }
+    public OpcUaPollerHostedService(ILogger<OpcUaPollerHostedService> logger)
+    {
+        _logger = logger;
+    }
 
-//         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-//         {
-//             _logger.LogInformation("OPC UA Poller started");
-            
-//             await Task.Delay(2000, stoppingToken);
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("OPC UA CLIENT STARTED");
 
-//             await ConnectAsync(stoppingToken);
+        await ConnectAsync();
 
-//             while (!stoppingToken.IsCancellationRequested)
-//             {
-//                 var opcDevices = GetOpcDevices();
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                Poll();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "OPC UA polling failed");
+            }
 
-//                 foreach (var device in opcDevices)
-//                 {
-//                     await PollDeviceAsync(device, stoppingToken);
-//                 }
+            await Task.Delay(1000, stoppingToken);
+        }
+    }
 
-//                 await Task.Delay(500, stoppingToken);
-//             }
-//         }
+    private async Task ConnectAsync()
+    {
+        var config = new ApplicationConfiguration
+        {
+            ApplicationName = "WMIND Edge Gateway",
+            ApplicationType = ApplicationType.Client,
+            ApplicationUri = "urn:WMIND:EdgeGateway:Client",
 
-//         // ------------------------------------------------------
+            SecurityConfiguration = new SecurityConfiguration
+            {
+                ApplicationCertificate = new CertificateIdentifier
+                {
+                    StoreType = "Directory",
+                    StorePath = "pki/own",
+                    SubjectName = "CN=WMIND Edge Gateway Client"
+                },
 
-//         private List<DeviceConfigurationDto> GetOpcDevices()
-//         {
-//             if (!_cache.TryGetValue("DeviceConfigurations", out List<DeviceConfigurationDto>? devices))
-//                 return new();
+                TrustedPeerCertificates = new CertificateTrustList
+                {
+                    StoreType = "Directory",
+                    StorePath = "pki/trusted"
+                },
 
-//             return devices
-//                 .Where(d => d.Protocol.Equals("OpcUa", StringComparison.OrdinalIgnoreCase))
-//                 .ToList();
-//         }
+                RejectedCertificateStore = new CertificateTrustList
+                {
+                    StoreType = "Directory",
+                    StorePath = "pki/rejected"
+                },
 
-//         // ------------------------------------------------------
+                AutoAcceptUntrustedCertificates = true
+            },
 
-//         private async Task PollDeviceAsync(DeviceConfigurationDto device, CancellationToken ct)
-//         {
-//             if (device.Slaves == null || device.Slaves.Length == 0)
-//                 return;
+            TransportQuotas = new TransportQuotas
+            {
+                OperationTimeout = 15000
+            },
 
-//             var signals = device.Slaves
-//                 .Where(s => s.Signals != null)
-//                 .SelectMany(s => s.Signals!)
-//                 .ToList();
+            ClientConfiguration = new ClientConfiguration
+            {
+                DefaultSessionTimeout = 60000
+            }
+        };
 
-//             if (!signals.Any())
-//                 return;
+        await config.Validate(ApplicationType.Client);
 
-//             var nodeIds = signals
-//                 .Select(s => NodeId.Parse(s.NodeId))
-//                 .ToList();
+        if (config.SecurityConfiguration.ApplicationCertificate.Certificate == null)
+        {
+            await config.CertificateValidator.Update(config.SecurityConfiguration);
+        
+            var certificate = await config.SecurityConfiguration.ApplicationCertificate.Find(true);
+        
+            if (certificate == null)
+            {
+                certificate = CertificateFactory.CreateCertificate(
+                    config.SecurityConfiguration.ApplicationCertificate.StoreType,
+                    config.SecurityConfiguration.ApplicationCertificate.StorePath,
+                    null,
+                    config.ApplicationUri,
+                    config.ApplicationName,
+                    config.SecurityConfiguration.ApplicationCertificate.SubjectName,
+                    null,
+                    2048,
+                    DateTime.UtcNow.AddDays(-1),
+                    120, 
+                    256  
+                );
 
-//             _logger.LogInformation(
-//                 "Polling OPC Device: {Device} | Signals: {Count}",
-//                 device.DeviceName,
-//                 nodeIds.Count);
+                config.SecurityConfiguration.ApplicationCertificate.Certificate = certificate;
+            }
+        }
 
-//             await ReadValuesAsync(device, signals, nodeIds);
+        // OPC UA Server Endpoint
+        var endpoint = CoreClientUtils.SelectEndpoint(
+            "opc.tcp://localhost:4840/Simulator",
+            false
+        );
 
-//             await Task.Delay(device.PollIntervalMs, ct);
-//         }
+        var endpointConfig = EndpointConfiguration.Create(config);
 
-//         // ------------------------------------------------------
+        var configuredEndpoint = new ConfiguredEndpoint(
+            null,
+            endpoint,
+            endpointConfig
+        );
 
-//         private async Task ConnectAsync(CancellationToken ct)
-//         {
-//             string endpointUrl =
-//                 _config.GetValue<string>("OpcUa:EndpointUrl")
-//                 ?? "opc.tcp://localhost:4840/wmind/opcua";
+        _session = await Session.Create(
+            config,
+            configuredEndpoint,
+            false,
+            "WMIND_OPC_UA_SESSION",
+            60000,
+            null,
+            null
+        );
 
-//             var appConfig = new ApplicationConfiguration
-//             {
-//                 ApplicationName = "WMIND.OpcUaClient",
-//                 ApplicationUri = $"urn:{Environment.MachineName}:WMIND:OpcUaClient",
-//                 ApplicationType = ApplicationType.Client,
+        _logger.LogInformation("OPC UA CLIENT CONNECTED");
+    }
 
-//                 SecurityConfiguration = new SecurityConfiguration
-//                 {
-//                     ApplicationCertificate = new CertificateIdentifier
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_MachineDefault",
-//                         SubjectName = "CN=WMIND.OpcUaClient"
-//                     },
+    private void Poll()
+    {
+        if (_session == null || !_session.Connected)
+            return;
 
-//                     TrustedPeerCertificates = new CertificateTrustList
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_TrustedPeers"
-//                     },
+        try
+        {
+            var counter = _session.ReadValue(new NodeId("Counter1", 2));
+            var random  = _session.ReadValue(new NodeId("Random1", 2));
+            var sine    = _session.ReadValue(new NodeId("Sine1", 2));
 
-//                     TrustedIssuerCertificates = new CertificateTrustList
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_Issuers"
-//                     },
-
-//                     RejectedCertificateStore = new CertificateTrustList
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_Rejected"
-//                     },
-
-//                     AutoAcceptUntrustedCertificates = true,
-//                     AddAppCertToTrustedStore = true
-//                 },
-
-//                 TransportQuotas = new TransportQuotas
-//                 {
-//                     OperationTimeout = 15000
-//                 },
-
-//                 ClientConfiguration = new ClientConfiguration
-//                 {
-//                     DefaultSessionTimeout = 60000
-//                 }
-//             };
-
-//             // Validate + auto-create certificate
-//             await appConfig.Validate(ApplicationType.Client);
-
-
-//             var endpoint = CoreClientUtils.SelectEndpoint(endpointUrl, false);
-//             var configuredEndpoint = new ConfiguredEndpoint(null, endpoint);
-
-//             _session = await Session.Create(
-//                 appConfig,
-//                 configuredEndpoint,
-//                 false,
-//                 "WMIND-Session",
-//                 60000,
-//                 null,
-//                 null,
-//                 ct);
-
-//             _logger.LogInformation("Connected to OPC UA Server: {Url}", endpointUrl);
-//         }
-
-//         // ------------------------------------------------------
-
-//         private async Task ReadValuesAsync(
-//             DeviceConfigurationDto device,
-//             List<OpcSignalDto> signals,
-//             List<NodeId> nodeIds)
-//         {
-//             if (_session == null || !_session.Connected)
-//                 return;
-
-//             var readList = new ReadValueIdCollection(
-//                 nodeIds.Select(n => new ReadValueId
-//                 {
-//                     NodeId = n,
-//                     AttributeId = Attributes.Value
-//                 })
-//             );
-
-//             var response = await _session.ReadAsync(
-//                 null,
-//                 0,
-//                 TimestampsToReturn.Source,
-//                 readList,
-//                 CancellationToken.None);
-
-//             for (int i = 0; i < response.Results.Count; i++)
-//             {
-//                 var signal = signals[i];
-//                 var value = response.Results[i].Value;
-
-//                 _logger.LogInformation(
-//                     "[OPC][{Device}] {Signal} ({NodeId}) = {Value}",
-//                     device.DeviceName,
-//                     signal.SignalName,
-//                     signal.NodeId,
-//                     value
-//                 );
-//             }
-//         }
-//     }
-// }
+            _logger.LogInformation(
+                "OPC UA POLL | Counter={Counter}, Random={Random:F2}, Sine={Sine:F2}",
+                counter.Value,
+                random.Value,
+                sine.Value
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OPC UA polling failed");
+        }
+    }
+}

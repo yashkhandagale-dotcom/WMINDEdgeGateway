@@ -62,6 +62,7 @@ var host = Host.CreateDefaultBuilder(args)
 
         
         services.AddHostedService<ModbusPollerHostedService>();
+        services.AddHostedService<OpcUaPollerHostedService>();
     })
     .ConfigureLogging(logging =>
     {
@@ -70,6 +71,7 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .Build();
 
+Console.WriteLine("OPC UA CLIENT STARTED");
 
 await InitializeCacheAsync(host.Services);
 
