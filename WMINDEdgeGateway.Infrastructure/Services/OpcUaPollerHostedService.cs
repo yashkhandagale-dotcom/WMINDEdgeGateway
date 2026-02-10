@@ -142,20 +142,25 @@ public class OpcUaPollerHostedService : BackgroundService
 
         try
         {
-            var counter = _session.ReadValue(new NodeId("Counter1", 2));
-            var random  = _session.ReadValue(new NodeId("Random1", 2));
-            var sine    = _session.ReadValue(new NodeId("Sine1", 2));
+            var voltage = _session.ReadValue(
+                NodeId.Parse("ns=2;s=Plant=MUMBAI_PLANT/Line=ASSEMBLY_01/Machine=CNC_02/Signal=VOLTAGE"));
+
+            var temp = _session.ReadValue(
+                NodeId.Parse("ns=2;s=Plant=MUMBAI_PLANT/Line=ASSEMBLY_01/Machine=CNC_02/Signal=TEMP"));
+
+            var rpm = _session.ReadValue(
+                NodeId.Parse("ns=2;s=Plant=MUMBAI_PLANT/Line=ASSEMBLY_01/Machine=CNC_02/Signal=RPM"));
 
             _logger.LogInformation(
-                "OPC UA POLL | Counter={Counter}, Random={Random:F2}, Sine={Sine:F2}",
-                counter.Value,
-                random.Value,
-                sine.Value
-            );
+                "OPC UA POLL | Voltage={Voltage:F2}, Temp={Temp:F2}, RPM={RPM:F2}",
+                voltage.Value,
+                temp.Value,
+                rpm.Value);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "OPC UA polling failed");
         }
     }
+
 }

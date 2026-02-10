@@ -16,7 +16,7 @@ var host = Host.CreateDefaultBuilder(args)
     {
         IConfiguration configuration = context.Configuration;
 
-    
+        /*
         services.AddSingleton<IAuthClient>(sp =>
         {
             var http = new HttpClient
@@ -26,7 +26,6 @@ var host = Host.CreateDefaultBuilder(args)
             return new AuthClient(http);
         });
 
-   
         services.AddSingleton<TokenService>(sp =>
         {
             var authClient = sp.GetRequiredService<IAuthClient>();
@@ -36,7 +35,6 @@ var host = Host.CreateDefaultBuilder(args)
             return new TokenService(authClient, memoryCache, clientId, clientSecret);
         });
 
-     
         services.AddSingleton<IDeviceServiceClient>(sp =>
         {
             var http = new HttpClient
@@ -47,11 +45,9 @@ var host = Host.CreateDefaultBuilder(args)
             return new DeviceServiceClient(http, tokenService);
         });
 
-       
         services.AddMemoryCache();
         services.AddSingleton<MemoryCacheService>();
 
-  
         services.AddSingleton(sp =>
         {
             var url = configuration["InfluxDB:Url"] ?? "http://localhost:8086";
@@ -60,8 +56,9 @@ var host = Host.CreateDefaultBuilder(args)
             return new InfluxDBClient(url, token);
         });
 
-        
         services.AddHostedService<ModbusPollerHostedService>();
+        */
+
         services.AddHostedService<OpcUaPollerHostedService>();
     })
     .ConfigureLogging(logging =>
@@ -73,12 +70,13 @@ var host = Host.CreateDefaultBuilder(args)
 
 Console.WriteLine("OPC UA CLIENT STARTED");
 
+/*
 await InitializeCacheAsync(host.Services);
-
+*/
 
 await host.RunAsync();
 
-
+/*
 async Task InitializeCacheAsync(IServiceProvider services)
 {
     var tokenService = services.GetRequiredService<TokenService>();
@@ -99,3 +97,4 @@ async Task InitializeCacheAsync(IServiceProvider services)
     Console.WriteLine("Modbus devices loaded into cache");
     Console.WriteLine($"Total devices in cache: {allConfigs.Count}");
 }
+*/
