@@ -34,13 +34,15 @@ public class InfluxToRabbitHostedService : BackgroundService
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         var rabbitConfig = _config.GetSection("RabbitMq");
+
         var factory = new ConnectionFactory()
         {
-            HostName = "localhost",
-            Port = 5672,
-            UserName = "guest",
-            Password = "guest"
+            HostName = rabbitConfig["HostName"],
+            Port = int.Parse(rabbitConfig["Port"]),
+            UserName = rabbitConfig["UserName"],
+            Password = rabbitConfig["Password"]
         };
+
         
         _connection = factory.CreateConnection();
         _channel = _connection.CreateModel();
