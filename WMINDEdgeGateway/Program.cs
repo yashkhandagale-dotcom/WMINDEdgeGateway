@@ -60,6 +60,8 @@ var host = Host.CreateDefaultBuilder(args)
         */
 
         services.AddHostedService<OpcUaPollerHostedService>();
+        services.AddHostedService<OpcUaSubscriptionHostedService>();
+
     })
     .ConfigureLogging(logging =>
     {
