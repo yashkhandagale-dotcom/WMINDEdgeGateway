@@ -79,7 +79,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         {
             _log.LogInformation("Modbus poller started (device-per-loop mode)");
 
-
             try
             {
                 while (!stoppingToken.IsCancellationRequested)
@@ -88,7 +87,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     {
                         var deviceConfigs = _cache.Get<List<DeviceConfigurationDto>>("DeviceConfigurations");
 
-
                         if (deviceConfigs == null || !deviceConfigs.Any())
                         {
                             _log.LogWarning("No device configurations in cache");
@@ -96,16 +94,25 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                             continue;
                         }
 
+                        // ? FILTER: Only Modbus devices
+                        var modbusDevices = deviceConfigs
+                            .Where(d => d.protocol.Equals("modbus", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
 
-                        foreach (var config in deviceConfigs)
+                        if (!modbusDevices.Any())
+                        {
+                            _log.LogInformation("No Modbus devices found in cache");
+                            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                            continue;
+                        }
+
+                        foreach (var config in modbusDevices)
                         {
                             if (_deviceTasks.ContainsKey(config.Id)) continue;
-
 
                             // fire-and-forget long running loop for the device
                             var task = Task.Run(() => PollLoopForDeviceAsync(config, stoppingToken), stoppingToken);
                             _deviceTasks.TryAdd(config.Id, task);
-
 
                             var completed = _deviceTasks.Where(kvp => kvp.Value.IsCompleted).Select(kvp => kvp.Key).ToList();
                             foreach (var k in completed) _deviceTasks.TryRemove(k, out _);
@@ -115,7 +122,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     {
                         _log.LogError(ex, "Poll loop manager error");
                     }
-
 
                     await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
                 }
