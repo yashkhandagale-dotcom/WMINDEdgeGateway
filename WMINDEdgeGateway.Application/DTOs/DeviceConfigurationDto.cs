@@ -42,4 +42,6 @@ namespace WMINDEdgeGateway.Application.DTOs
         [property: JsonPropertyName("protocolSettingsJson")] string configurationJson,
         [property: JsonPropertyName("slaves")] DeviceSlaveDto[] slaves
     );
+
+   
 }

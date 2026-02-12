@@ -10,13 +10,16 @@ using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
 using WMINDEdgeGateway.Infrastructure.Services;
 using InfluxDB.Client;
+using WMINDEdgeGateway.Application.Services;
+using WMINDEdgeGateway.Infrastructure.Messaging;
+using WMINDEdgeGateway.Infrastructure.Persistence;
 
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((context, services) =>
     {
         IConfiguration configuration = context.Configuration;
 
-    
+        // ---------------- AUTH ----------------
         services.AddSingleton<IAuthClient>(sp =>
         {
             var http = new HttpClient
@@ -26,7 +29,6 @@ var host = Host.CreateDefaultBuilder(args)
             return new AuthClient(http);
         });
 
-   
         services.AddSingleton<TokenService>(sp =>
         {
             var authClient = sp.GetRequiredService<IAuthClient>();
@@ -36,7 +38,7 @@ var host = Host.CreateDefaultBuilder(args)
             return new TokenService(authClient, memoryCache, clientId, clientSecret);
         });
 
-     
+        // ---------------- DEVICE API ----------------
         services.AddSingleton<IDeviceServiceClient>(sp =>
         {
             var http = new HttpClient
@@ -47,20 +49,35 @@ var host = Host.CreateDefaultBuilder(args)
             return new DeviceServiceClient(http, tokenService);
         });
 
-       
+        // ---------------- CACHE ----------------
         services.AddMemoryCache();
         services.AddSingleton<MemoryCacheService>();
 
-  
+        // ---------------- INFLUX DB ----------------
         services.AddSingleton(sp =>
         {
-            var url = configuration["InfluxDB:Url"] ?? "http://localhost:8086";
+            var url = configuration["InfluxDB:Url"] ?? "http://localhost:8087";
             var token = configuration["InfluxDB:Token"] ?? "my-token";
-
             return new InfluxDBClient(url, token);
         });
 
-        
+        // ADDED — RABBITMQ + BATCH TELEMETRY SENDER
+        // Telemetry repository (reads from InfluxDB)
+        services.AddSingleton<ITelemetryRepository, InfluxTelemetryRepository>();
+
+        services.Configure<RabbitMqOptions>(
+        configuration.GetSection("RabbitMQ"));
+
+        services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
+
+
+        //Batch service (application logic)
+        services.AddSingleton<TelemetryBatchService>();
+
+        //Background worker that sends batches every X seconds
+        services.AddHostedService<TelemetryBatchHostedService>();
+
+        // ---------------- MODBUS POLLER ----------------
         services.AddHostedService<ModbusPollerHostedService>();
     })
     .ConfigureLogging(logging =>
@@ -70,10 +87,7 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .Build();
 
-
 await InitializeCacheAsync(host.Services);
-
-
 await host.RunAsync();
 
 

@@ -184,7 +184,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
             JsonDocument settings;
-            try { settings = JsonDocument.Parse("{\"IpAddress\":\"127.0.0.1\",\"Port\":5020,\"SlaveId\":1,\"Endian\":\"Little\"}"); }
+            try { settings = JsonDocument.Parse(deviceConfig.configurationJson); 
+            Console.WriteLine(settings);
+            }
             catch (Exception ex)
             {
                 _log.LogError(ex, "Invalid ProtocolSettingsJson for device {Device}", deviceConfig.Id);
@@ -484,10 +486,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
 
                             // Print the whole buffer atomically to avoid mixing with other device outputs
-                            lock (_consoleLock)
-                            {
-                                Console.Write(sb.ToString());
-                            }
+                            // lock (_consoleLock)
+                            // {
+                            //     Console.Write(sb.ToString());
+                            // }
                         }
                         catch (Exception ex)
                         {
@@ -503,23 +505,30 @@ if (allReads.Count > 0)
 {
     try
     {
-        var points = allReads.Select(r =>
+      var points = allReads.Select(r =>
             PointData.Measurement("modbus_telemetry")
-                .Tag("deviceId", deviceConfig.Id.ToString())
+                .Tag("DeviceId", deviceConfig.Id.ToString())
                 .Tag("deviceSlaveId", r.deviceSlaveId.ToString())
                 .Tag("slaveIndex", r.slaveIndex.ToString())
-                .Tag("dataType", r.SignalType)
-                .Field("value", r.Value)
-                .Field("registerAddress", r.RegisterAddress)
-                .Field("unit", r.Unit ?? string.Empty)
+                .Tag("SignalType", r.SignalType)
+                .Tag("Unit", r.Unit ?? string.Empty)
+                .Tag("RegisterAddress", r.RegisterAddress.ToString())
+                .Field("Value", r.Value)   // ✅ FIELD, not tag
                 .Timestamp(DateTime.UtcNow, WritePrecision.Ns)
         ).ToList();
 
-        var writeApi = _influxClient.GetWriteApiAsync();
+        foreach (var point in points)
+{
+    var line = point.ToLineProtocol();
+    _log.LogInformation("Influx LineProtocol → {Line}", line);
+}
 
-        await writeApi.WritePointsAsync(points, _bucket, _org);
 
-        _log.LogInformation("Written {Count} points to InfluxDB for device {Device}", points.Count, deviceConfig.Id);
+                await _influxClient
+            .GetWriteApiAsync()
+            .WritePointsAsync(points, _bucket, _org);
+
+        // _log.LogInformation("Written {Count} points to InfluxDB for device {Device}", points.Count, deviceConfig.Id);
     }
     catch (Exception ex)
     {
