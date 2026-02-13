@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text.Json;
+using System.Net.Http.Json;
 using System.Threading.Tasks;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
@@ -24,65 +24,26 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             if (string.IsNullOrWhiteSpace(token))
                 throw new ArgumentException("Token cannot be empty", nameof(token));
 
-            // FIX 4: Build a per-request message instead of mutating DefaultRequestHeaders.
-            // Mutating DefaultRequestHeaders is not thread-safe and causes race conditions
-            // when multiple requests are in-flight concurrently.
-            // FIX 5: Added leading slash to the relative URI.
-            // Without it, Uri resolution can silently drop the last segment of BaseAddress
-            // (e.g. "http://host/api/" + "api/devices/..." works but
-            //        "http://host/api"  + "api/devices/..." resolves to "http://host/api/devices/...")
-            // A leading slash makes the path absolute relative to the host, which is unambiguous.
+            // FIX: Corrected route to match actual server-registered URL (confirmed via Postman).
+            // No leading slash — lets BaseAddress ("http://localhost:5000/") resolve correctly.
             var request = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"api/devices/configurations/gateway/{gatewayId}"
+                $"api/devices/devices/configurations/gateway/{gatewayId}"
             );
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var response = await _http.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
-            // Read raw JSON first for diagnostic logging
-            var rawJson = await response.Content.ReadAsStringAsync();
-            Console.WriteLine("Raw JSON Response:");
-            Console.WriteLine(rawJson);
-            Console.WriteLine(new string('=', 80));
+            var apiResponse = await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
 
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString
-            };
+            if (apiResponse == null)
+                return Array.Empty<DeviceConfigurationDto>();
 
-            try
-            {
-                var apiResponse = JsonSerializer.Deserialize<ApiResponse<DeviceConfigurationDto[]>>(rawJson, options);
+            if (!apiResponse.Success)
+                throw new Exception($"API returned error: {apiResponse.Error}");
 
-                if (apiResponse == null)
-                {
-                    Console.WriteLine("API response is null");
-                    return Array.Empty<DeviceConfigurationDto>();
-                }
-
-                if (!apiResponse.Success)
-                {
-                    Console.WriteLine($"API returned error: {apiResponse.Error}");
-                    throw new Exception($"API returned error: {apiResponse.Error}");
-                }
-
-                Console.WriteLine($"Successfully deserialized {apiResponse.Data?.Length ?? 0} configurations");
-                return apiResponse.Data ?? Array.Empty<DeviceConfigurationDto>();
-            }
-            catch (JsonException ex)
-            {
-                Console.WriteLine($"JSON Deserialization Error:");
-                Console.WriteLine($"   Message: {ex.Message}");
-                Console.WriteLine($"   Path: {ex.Path}");
-                Console.WriteLine($"   Line: {ex.LineNumber}, Position: {ex.BytePositionInLine}");
-                Console.WriteLine();
-                Console.WriteLine("Raw JSON was:");
-                Console.WriteLine(rawJson);
-                throw;
-            }
+            return apiResponse.Data ?? Array.Empty<DeviceConfigurationDto>();
         }
     }
 }

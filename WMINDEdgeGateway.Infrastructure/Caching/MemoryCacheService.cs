@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace WMINDEdgeGateway.Infrastructure.Caching
 {
@@ -7,59 +8,65 @@ namespace WMINDEdgeGateway.Infrastructure.Caching
     {
         void Set<T>(string key, T value, TimeSpan duration);
         T? Get<T>(string key);
-        void PrintCache(); // ✅ Added to interface
+        void PrintCache();
     }
 
     public class MemoryCacheService : IMemoryCacheService
     {
-        // Internal cache dictionary with expiry
         private readonly ConcurrentDictionary<string, (object Value, DateTime Expiry)> _cache = new();
 
-        // Store an item in cache with TTL
+        private static readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            WriteIndented = true
+        };
+
         public void Set<T>(string key, T value, TimeSpan duration)
         {
             _cache[key] = (value!, DateTime.UtcNow.Add(duration));
         }
 
-        // Retrieve item from cache
         public T? Get<T>(string key)
         {
             if (_cache.TryGetValue(key, out var entry))
             {
                 if (entry.Expiry > DateTime.UtcNow)
                     return (T)entry.Value;
-
-                // Remove expired item
                 _cache.TryRemove(key, out _);
             }
             return default;
         }
 
-        // Print all cached items to console
         public void PrintCache()
         {
             Console.WriteLine("---- Memory Cache Contents ----");
 
             foreach (var key in _cache.Keys)
             {
-                if (_cache.TryGetValue(key, out var entry) && entry.Expiry > DateTime.UtcNow)
-                {
-                    Console.WriteLine($"Key: {key}");
+                if (!_cache.TryGetValue(key, out var entry) || entry.Expiry <= DateTime.UtcNow)
+                    continue;
 
-                    if (entry.Value is Array arr)
+                Console.WriteLine($"Key      : {key}");
+                Console.WriteLine($"Expires  : {entry.Expiry:yyyy-MM-dd HH:mm:ss} UTC");
+
+                if (entry.Value is Array arr)
+                {
+                    Console.WriteLine($"Count    : {arr.Length} items");
+                    Console.WriteLine();
+
+                    int i = 1;
+                    foreach (var item in arr)
                     {
-                        Console.WriteLine($"Value: Array ({arr.Length} items)");
-                        foreach (var item in arr)
-                            Console.WriteLine($"  - {item}");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Value: {entry.Value}");
+                        Console.WriteLine($"  [{i++}] {JsonSerializer.Serialize(item, _jsonOptions)}");
+                        Console.WriteLine();
                     }
                 }
-            }
+                else
+                {
+                    Console.WriteLine($"Value    : {JsonSerializer.Serialize(entry.Value, _jsonOptions)}");
+                }
 
-            Console.WriteLine("--------------------------------");
+                Console.WriteLine("--------------------------------");
+            }
         }
     }
 }
