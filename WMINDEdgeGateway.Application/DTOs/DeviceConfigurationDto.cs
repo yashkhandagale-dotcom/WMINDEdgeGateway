@@ -9,37 +9,93 @@ namespace WMINDEdgeGateway.Application.DTOs
         public bool Success { get; set; }
 
         [JsonPropertyName("data")]
-        public T Data { get; set; }
+        public T? Data { get; set; }
 
         [JsonPropertyName("error")]
         public string? Error { get; set; }
     }
 
-    public record DeviceRegisterDto(
-        [property: JsonPropertyName("registerId")] Guid RegisterId,
-        [property: JsonPropertyName("registerAddress")] int RegisterAddress,
-        [property: JsonPropertyName("registerLength")] int RegisterLength,
-        [property: JsonPropertyName("dataType")] string DataType,
-        [property: JsonPropertyName("scale")] double Scale,
-        [property: JsonPropertyName("unit")] string? Unit,
-        [property: JsonPropertyName("byteOrder")] string ByteOrder,
-        [property: JsonPropertyName("wordSwap")] bool WordSwap,
-        [property: JsonPropertyName("isHealthy")] bool IsHealthy
-    );
+    public class DeviceRegisterDto
+    {
+        [JsonPropertyName("registerId")]
+        public Guid RegisterId { get; set; }
 
-    public record DeviceSlaveDto(
-        [property: JsonPropertyName("deviceSlaveId")] Guid DeviceSlaveId,
-        [property: JsonPropertyName("slaveIndex")] int SlaveIndex,
-        [property: JsonPropertyName("isHealthy")] bool IsHealthy,
-        [property: JsonPropertyName("registers")] DeviceRegisterDto[] Registers
-    );
+        [JsonPropertyName("registerAddress")]
+        public int RegisterAddress { get; set; }
 
-    public record DeviceConfigurationDto(
-        [property: JsonPropertyName("deviceId")] Guid Id,
-        [property: JsonPropertyName("name")] string DeviceName,
-        [property: JsonPropertyName("protocol")] string Protocol,
-        [property: JsonPropertyName("pollIntervalMs")] int PollIntervalMs,
-        [property: JsonPropertyName("protocolSettingsJson")] string ConfigurationJson,
-        [property: JsonPropertyName("slaves")] DeviceSlaveDto[] Slaves
-    );
+        [JsonPropertyName("registerLength")]
+        public int RegisterLength { get; set; }
+
+        [JsonPropertyName("dataType")]
+        public string DataType { get; set; } = string.Empty;
+
+        [JsonPropertyName("scale")]
+        public double Scale { get; set; }
+
+        [JsonPropertyName("unit")]
+        public string? Unit { get; set; }
+
+        [JsonPropertyName("byteOrder")]
+        public string? ByteOrder { get; set; }
+
+        [JsonPropertyName("wordSwap")]
+        public bool WordSwap { get; set; }
+
+        [JsonPropertyName("signalId")]
+        public Guid? SignalId { get; set; }
+
+        [JsonPropertyName("isHealthy")]
+        public bool IsHealthy { get; set; }
+    }
+
+    public class DeviceSlaveDto
+    {
+        [JsonPropertyName("deviceSlaveId")]
+        public Guid DeviceSlaveId { get; set; }
+
+        [JsonPropertyName("slaveIndex")]
+        public int SlaveIndex { get; set; }
+
+        [JsonPropertyName("isHealthy")]
+        public bool IsHealthy { get; set; }
+
+        [JsonPropertyName("registers")]
+        public DeviceRegisterDto[] Registers { get; set; } = Array.Empty<DeviceRegisterDto>();
+    }
+
+    public class DeviceConfigurationDto
+    {
+        [JsonPropertyName("deviceId")]
+        public Guid Id { get; set; }
+
+        [JsonPropertyName("name")]
+        public string DeviceName { get; set; } = string.Empty;
+
+        [JsonPropertyName("protocol")]
+        public int Protocol { get; set; }
+
+        [JsonPropertyName("pollIntervalMs")]
+        public int? PollIntervalMs { get; set; }
+
+        [JsonPropertyName("connectionString")]
+        public string? ConnectionString { get; set; }
+
+        [JsonPropertyName("connectionMode")]
+        public int? ConnectionMode { get; set; }
+
+        [JsonPropertyName("ipAddress")]
+        public string? IpAddress { get; set; }
+
+        [JsonPropertyName("port")]
+        public int? Port { get; set; }
+
+        [JsonPropertyName("slaveId")]
+        public int? SlaveId { get; set; }
+
+        [JsonPropertyName("endian")]
+        public string? Endian { get; set; }
+
+        [JsonPropertyName("slaves")]
+        public DeviceSlaveDto[] Slaves { get; set; } = Array.Empty<DeviceSlaveDto>();
+    }
 }

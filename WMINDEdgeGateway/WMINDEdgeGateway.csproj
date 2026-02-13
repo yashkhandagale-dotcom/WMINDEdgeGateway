@@ -1,27 +1,22 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.Worker">
 
-  <ItemGroup>
-    <ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
-    <ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
-    <ProjectReference Include="..\WMINDEdgeGateway.Infrastructure\WMINDEdgeGateway.Infrastructure.csproj" />
-  </ItemGroup>
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
-    <PackageReference Include="System.Net.Http.Json" Version="10.0.2" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
+		<ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
+		<ProjectReference Include="..\WMINDEdgeGateway.Infrastructure\WMINDEdgeGateway.Infrastructure.csproj" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+	<ItemGroup>
+		<None Update="appsettings.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
 
 </Project>

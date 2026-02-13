@@ -1,39 +1,46 @@
 ﻿using System.Net.Http.Json;
-using WMINDEdgeGateway.Application.DTOs;
-using WMINDEdgeGateway.Application.Interfaces;
-using Microsoft.Extensions.Options;
 using System.Net.Http;
 using System.Net.Http.Headers;
-
+using WMINDEdgeGateway.Application.DTOs;
+using WMINDEdgeGateway.Application.Interfaces;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
     public class AuthClient : IAuthClient
     {
-        private readonly IHttpClientFactory _factory;
+        private readonly HttpClient _http;
 
-        public AuthClient(IHttpClientFactory factory) => _factory = factory;
+        // FIX: Replace IHttpClientFactory with a direct HttpClient parameter.
+        // AddHttpClient<IAuthClient, AuthClient>() in Program.cs requires this
+        // constructor signature to inject the pre-configured typed client.
+        public AuthClient(HttpClient http)
+        {
+            _http = http ?? throw new ArgumentNullException(nameof(http));
+        }
 
         public async Task<AuthTokenResponse> GetTokenAsync(string clientId, string clientSecret)
         {
-            var http = _factory.CreateClient("AuthClient");
-
             var form = new Dictionary<string, string>
-    {
-        { "client_id", clientId },
-        { "client_secret", clientSecret }
-    };
+            {
+                { "client_id",     clientId     },
+                { "client_secret", clientSecret }
+            };
 
-            var response = await http.PostAsync("api/devices/connect/token", new FormUrlEncodedContent(form));
+            // Per-request message — same thread-safe pattern as DeviceServiceClient
+            var request = new HttpRequestMessage(HttpMethod.Post, "api/devices/connect/token")
+            {
+                Content = new FormUrlEncodedContent(form)
+            };
 
+            var response = await _http.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var tokenResponse = await response.Content.ReadFromJsonAsync<AuthTokenResponse>();
+
             if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
                 throw new Exception("Failed to retrieve a valid token");
 
-            return tokenResponse; // Return AuthTokenResponse object, not string
+            return tokenResponse;
         }
-
     }
 }

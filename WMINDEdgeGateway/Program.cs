@@ -15,24 +15,26 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .ConfigureServices((context, services) =>
     {
-        // HttpClients
-        services.AddHttpClient("AuthClient", c =>
+        // FIX 1 & 2: Use AddHttpClient<TInterface, TImpl> (typed client pattern).
+        // This correctly wires the configured HttpClient into each service.
+        // The separate named AddHttpClient("AuthClient") and AddHttpClient("DeviceClient")
+        // blocks have been removed — they were never connected to the service constructors.
+
+        services.AddHttpClient<IAuthClient, AuthClient>(c =>
         {
             var baseUrl = context.Configuration["Auth:BaseUrl"];
             if (!string.IsNullOrEmpty(baseUrl))
                 c.BaseAddress = new Uri(baseUrl);
         });
 
-        services.AddHttpClient("DeviceClient", c =>
+        services.AddHttpClient<IDeviceServiceClient, DeviceServiceClient>(c =>
         {
             var baseUrl = context.Configuration["DeviceApi:BaseUrl"];
             if (!string.IsNullOrEmpty(baseUrl))
                 c.BaseAddress = new Uri(baseUrl);
         });
 
-        // Services
-        services.AddSingleton<IAuthClient, AuthClient>();
-        services.AddSingleton<IDeviceServiceClient, DeviceServiceClient>();
+        // MemoryCacheService has no HttpClient dependency — singleton is correct here
         services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
 
         // Options
@@ -73,18 +75,14 @@ static async Task RunGatewayOnceAsync(
 
     try
     {
-        // If token is empty → get token
-        if (string.IsNullOrEmpty(token))
-        {
-            Console.WriteLine("Getting token...");
-            var tokenResponse = await authClient.GetTokenAsync(
-                gatewayOptions.ClientId,
-                gatewayOptions.ClientSecret
-            );
+        Console.WriteLine("Getting token...");
+        var tokenResponse = await authClient.GetTokenAsync(
+            gatewayOptions.ClientId,
+            gatewayOptions.ClientSecret
+        );
 
-            token = tokenResponse.AccessToken;
-            Console.WriteLine("Token acquired.");
-        }
+        token = tokenResponse.AccessToken;
+        Console.WriteLine("Token acquired.");
 
         // Fetch device configurations
         var configs = await deviceClient.GetConfigurationsAsync(
@@ -102,7 +100,7 @@ static async Task RunGatewayOnceAsync(
     }
     catch (HttpRequestException ex) when (ex.Message.Contains("401"))
     {
-        Console.WriteLine("⚠️ Token expired. Refreshing token...");
+        Console.WriteLine("Token expired. Refreshing token...");
 
         var newTokenResponse = await authClient.GetTokenAsync(
             gatewayOptions.ClientId,
