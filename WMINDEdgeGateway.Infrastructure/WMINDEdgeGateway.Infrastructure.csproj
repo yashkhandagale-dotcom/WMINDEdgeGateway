@@ -1,26 +1,20 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
-  <ItemGroup>
-    <ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
-    <ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="InfluxDB.Client" Version="5.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.2" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.2" />
-  </ItemGroup>
-
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+		<ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
+		<ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
 	</ItemGroup>
-
+	<ItemGroup>
+		<PackageReference Include="InfluxDB.Client" Version="5.0.0" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.2" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.2" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.2" />
+		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.2" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+		<PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+	</ItemGroup>
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
 </Project>
