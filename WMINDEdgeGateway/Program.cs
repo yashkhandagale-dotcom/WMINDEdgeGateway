@@ -48,7 +48,7 @@ var tokenService = new TokenService(authClient, memoryCache, gatewayClientId, ga
 IDeviceServiceClient deviceClient = new DeviceServiceClient(deviceHttp, tokenService);
 var cache = new MemoryCacheService();
 
-// *** NEW: Create InfluxDB service ***
+// Create InfluxDB service (for Modbus)
 var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
 var influxLogger = loggerFactory.CreateLogger<InfluxDbService>();
 var influxDbService = new InfluxDbService(influxLogger, configuration);
@@ -80,39 +80,61 @@ try
     var configs = await deviceClient.GetConfigurationsAsync(gatewayClientId);
     Console.WriteLine($"Fetched {configs.Length} configurations.");
 
-    // Step 3: Cache ALL configurations
     var configList = configs.ToList();
-    cache.Set("DeviceConfigurations", configList, TimeSpan.FromMinutes(30));
-    Console.WriteLine("Configurations cached in memory.");
-    cache.PrintCache();
 
-    // Step 4: Group by protocol and dispatch
+    // Step 3: Group by protocol
     var modbusDevices = configList.Where(c => c.Protocol == 1).ToList();
-    var opcuaDevices = configList.Where(c => c.Protocol == 2).ToList();
+    var opcuaDevices  = configList.Where(c => c.Protocol == 2).ToList();
 
-    if (opcuaDevices.Any())
-        Console.WriteLine($"Skipping {opcuaDevices.Count} OPC-UA device(s) — not implemented yet.");
-
-    if (!modbusDevices.Any())
+    if (!modbusDevices.Any() && !opcuaDevices.Any())
     {
-        Console.WriteLine("No Modbus devices found. Nothing to poll.");
+        Console.WriteLine("No devices found to poll.");
         return;
     }
 
-    Console.WriteLine($"Starting Modbus polling for {modbusDevices.Count} device(s)...");
+    //
+    // =========================
+    // MODBUS START
+    // =========================
+    //
+    if (modbusDevices.Any())
+    {
+        Console.WriteLine($"Starting Modbus polling for {modbusDevices.Count} device(s)...");
 
-    // Cache only Modbus devices for the poller
-    cache.Set("DeviceConfigurations", modbusDevices, TimeSpan.FromMinutes(30));
+        cache.Set("ModbusDevices", modbusDevices, TimeSpan.FromMinutes(30));
 
-    // Step 5: Start Modbus poller with InfluxDB integration
-    var pollerLogger = loggerFactory.CreateLogger<ModbusPollerHostedService>();
+        var modbusLogger = loggerFactory.CreateLogger<ModbusPollerHostedService>();
 
-    // *** UPDATED: Pass InfluxDB service to poller ***
-    var poller = new ModbusPollerHostedService(pollerLogger, configuration, cache, influxDbService);
+        var modbusPoller = new ModbusPollerHostedService(
+            modbusLogger,
+            configuration,
+            cache,
+            influxDbService);
 
-    // Run poller until Ctrl+C
-    await poller.StartAsync(cts.Token);
-    Console.WriteLine("Modbus poller running with InfluxDB integration. Press Ctrl+C to stop.");
+        _ = Task.Run(() => modbusPoller.StartAsync(cts.Token));
+    }
+
+    //
+    // =========================
+    // OPC UA START
+    // =========================
+    //
+    if (opcuaDevices.Any())
+    {
+        Console.WriteLine($"Starting OPC UA polling for {opcuaDevices.Count} device(s)...");
+
+        cache.Set("OpcUaDevices", opcuaDevices, TimeSpan.FromMinutes(30));
+
+        var opcuaLogger = loggerFactory.CreateLogger<OpcUaPollerHostedService>();
+
+        var opcuaPoller = new OpcUaPollerHostedService(
+            opcuaLogger,
+            cache);
+
+        _ = Task.Run(() => opcuaPoller.StartAsync(cts.Token));
+    }
+
+    Console.WriteLine("Polling services running. Press Ctrl+C to stop.");
 
     // Keep alive until cancellation
     await Task.Delay(Timeout.Infinite, cts.Token);
@@ -131,7 +153,6 @@ catch (Exception ex)
 }
 finally
 {
-    // *** NEW: Dispose InfluxDB service ***
     influxDbService?.Dispose();
     Console.WriteLine("InfluxDB service disposed.");
 }

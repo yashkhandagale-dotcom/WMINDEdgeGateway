@@ -1,213 +1,339 @@
-// using Microsoft.Extensions.Hosting;
-// using Microsoft.Extensions.Logging;
-// using Microsoft.Extensions.Configuration;
-// using Microsoft.Extensions.Caching.Memory;
-// using Opc.Ua;
-// using Opc.Ua.Client;
-// using Opc.Ua.Configuration;
-// using System;
-// using System.Collections.Generic;
-// using System.Linq;
-// using System.Threading;
-// using System.Threading.Tasks;
-// using WMINDEdgeGateway.Application.DTOs;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Opc.Ua;
+using Opc.Ua.Client;
+using Opc.Ua.Configuration;
+using System.Collections.Concurrent;
+using WMINDEdgeGateway.Application.DTOs;
+using WMINDEdgeGateway.Infrastructure.Caching;
 
-// namespace WMINDEdgeGateway.Infrastructure.Services
-// {
-//     public class OpcUaPollerHostedService : BackgroundService
-//     {
-//         private readonly ILogger<OpcUaPollerHostedService> _logger;
-//         private readonly IConfiguration _config;
-//         private readonly IMemoryCache _cache;
+namespace WMINDEdgeGateway.Infrastructure.Services
+{
+    public class OpcUaPollerHostedService : BackgroundService
+    {
+        private readonly ILogger<OpcUaPollerHostedService> _log;
+        private readonly MemoryCacheService _cache;
+        private readonly IInfluxDbService _influxDb;
 
-//         private Session? _session;
+        private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
+        private readonly ConcurrentDictionary<Guid, Task> _deviceTasks = new();
 
-//         public OpcUaPollerHostedService(
-//             ILogger<OpcUaPollerHostedService> logger,
-//             IConfiguration config,
-//             IMemoryCache cache)
-//         {
-//             _logger = logger;
-//             _config = config;
-//             _cache = cache;
-//         }
+        private static readonly object _consoleLock = new();
 
-//         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-//         {
-//             _logger.LogInformation("OPC UA Poller started");
-            
-//             await Task.Delay(2000, stoppingToken);
+        private ApplicationConfiguration? _applicationConfiguration;
 
-//             await ConnectAsync(stoppingToken);
+        public OpcUaPollerHostedService(
+            ILogger<OpcUaPollerHostedService> log,
+            MemoryCacheService cache,
+            IInfluxDbService influxDb)
+        {
+            _log = log;
+            _cache = cache;
+            _influxDb = influxDb;
+        }
 
-//             while (!stoppingToken.IsCancellationRequested)
-//             {
-//                 var opcDevices = GetOpcDevices();
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _log.LogInformation("OPC UA Poller started (Manual Certificate Handling).");
 
-//                 foreach (var device in opcDevices)
-//                 {
-//                     await PollDeviceAsync(device, stoppingToken);
-//                 }
+            _applicationConfiguration = await CreateApplicationConfigurationAsync();
 
-//                 await Task.Delay(500, stoppingToken);
-//             }
-//         }
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var deviceConfigs =
+                        _cache.Get<List<DeviceConfigurationDto>>("OpcUaDevices");
 
-//         // ------------------------------------------------------
+                    if (deviceConfigs == null || !deviceConfigs.Any())
+                    {
+                        await Task.Delay(5000, stoppingToken);
+                        continue;
+                    }
 
-//         private List<DeviceConfigurationDto> GetOpcDevices()
-//         {
-//             if (!_cache.TryGetValue("DeviceConfigurations", out List<DeviceConfigurationDto>? devices))
-//                 return new();
+                    foreach (var config in deviceConfigs)
+                    {
+                        if (config.Protocol != 2) continue;
+                        if (_deviceTasks.ContainsKey(config.Id)) continue;
 
-//             return devices
-//                 .Where(d => d.Protocol.Equals("OpcUa", StringComparison.OrdinalIgnoreCase))
-//                 .ToList();
-//         }
+                        var task = Task.Run(
+                            () => PollLoopForDeviceAsync(config, stoppingToken),
+                            stoppingToken);
 
-//         // ------------------------------------------------------
+                        _deviceTasks.TryAdd(config.Id, task);
+                    }
 
-//         private async Task PollDeviceAsync(DeviceConfigurationDto device, CancellationToken ct)
-//         {
-//             if (device.Slaves == null || device.Slaves.Length == 0)
-//                 return;
+                    CleanupCompletedDevices();
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "OPC UA Poll manager error.");
+                }
 
-//             var signals = device.Slaves
-//                 .Where(s => s.Signals != null)
-//                 .SelectMany(s => s.Signals!)
-//                 .ToList();
+                await Task.Delay(5000, stoppingToken);
+            }
+        }
 
-//             if (!signals.Any())
-//                 return;
+        // ============================
+        // CERTIFICATE HANDLING
+        // ============================
+        private async Task<ApplicationConfiguration> CreateApplicationConfigurationAsync()
+        {
+            var config = new ApplicationConfiguration
+            {
+                ApplicationName = "WMIND Edge OPC UA Client",
+                ApplicationType = ApplicationType.Client,
+                ApplicationUri = $"urn:{Utils.GetHostName()}:WMIND:Edge",
 
-//             var nodeIds = signals
-//                 .Select(s => NodeId.Parse(s.NodeId))
-//                 .ToList();
+                SecurityConfiguration = new SecurityConfiguration
+                {
+                    ApplicationCertificate = new CertificateIdentifier
+                    {
+                        StoreType = "Directory",
+                        StorePath = "pki/own",
+                        SubjectName = "CN=WMIND Edge Gateway Client"
+                    },
 
-//             _logger.LogInformation(
-//                 "Polling OPC Device: {Device} | Signals: {Count}",
-//                 device.DeviceName,
-//                 nodeIds.Count);
+                    TrustedPeerCertificates = new CertificateTrustList
+                    {
+                        StoreType = "Directory",
+                        StorePath = "pki/trusted"
+                    },
 
-//             await ReadValuesAsync(device, signals, nodeIds);
+                    RejectedCertificateStore = new CertificateTrustList
+                    {
+                        StoreType = "Directory",
+                        StorePath = "pki/rejected"
+                    },
 
-//             await Task.Delay(device.PollIntervalMs, ct);
-//         }
+                    AutoAcceptUntrustedCertificates = true
+                },
 
-//         // ------------------------------------------------------
+                TransportQuotas = new TransportQuotas
+                {
+                    OperationTimeout = 15000
+                },
 
-//         private async Task ConnectAsync(CancellationToken ct)
-//         {
-//             string endpointUrl =
-//                 _config.GetValue<string>("OpcUa:EndpointUrl")
-//                 ?? "opc.tcp://localhost:4840/wmind/opcua";
+                ClientConfiguration = new ClientConfiguration
+                {
+                    DefaultSessionTimeout = 60000
+                }
+            };
 
-//             var appConfig = new ApplicationConfiguration
-//             {
-//                 ApplicationName = "WMIND.OpcUaClient",
-//                 ApplicationUri = $"urn:{Environment.MachineName}:WMIND:OpcUaClient",
-//                 ApplicationType = ApplicationType.Client,
+            await config.Validate(ApplicationType.Client);
 
-//                 SecurityConfiguration = new SecurityConfiguration
-//                 {
-//                     ApplicationCertificate = new CertificateIdentifier
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_MachineDefault",
-//                         SubjectName = "CN=WMIND.OpcUaClient"
-//                     },
+            config.CertificateValidator.CertificateValidation += (s, e) =>
+            {
+                e.Accept = true;
+                _log.LogWarning("Auto-accepted server certificate: {Subject}",
+                    e.Certificate.Subject);
+            };
 
-//                     TrustedPeerCertificates = new CertificateTrustList
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_TrustedPeers"
-//                     },
+            var cert = await config.SecurityConfiguration
+                                   .ApplicationCertificate
+                                   .Find(true);
 
-//                     TrustedIssuerCertificates = new CertificateTrustList
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_Issuers"
-//                     },
+            if (cert == null)
+            {
+                _log.LogWarning("Application certificate not found. Creating new one...");
 
-//                     RejectedCertificateStore = new CertificateTrustList
-//                     {
-//                         StoreType = "Directory",
-//                         StorePath = "CertificateStores/UA_Rejected"
-//                     },
+                cert = CertificateFactory.CreateCertificate(
+                    "Directory",
+                    "pki/own",
+                    null,
+                    config.ApplicationUri,
+                    config.ApplicationName,
+                    "CN=WMIND Edge Gateway Client",
+                    null,
+                    2048,
+                    DateTime.UtcNow.AddDays(-1),
+                    120,
+                    256
+                );
 
-//                     AutoAcceptUntrustedCertificates = true,
-//                     AddAppCertToTrustedStore = true
-//                 },
+                config.SecurityConfiguration.ApplicationCertificate.Certificate = cert;
+            }
 
-//                 TransportQuotas = new TransportQuotas
-//                 {
-//                     OperationTimeout = 15000
-//                 },
+            _log.LogInformation("Application certificate ready.");
+            return config;
+        }
 
-//                 ClientConfiguration = new ClientConfiguration
-//                 {
-//                     DefaultSessionTimeout = 60000
-//                 }
-//             };
+        // ============================
+        // POLLING LOOP
+        // ============================
+        private async Task PollLoopForDeviceAsync(
+            DeviceConfigurationDto deviceConfig,
+            CancellationToken ct)
+        {
+            var session = await ConnectToServerAsync(deviceConfig, ct);
+            if (session == null) return;
 
-//             // Validate + auto-create certificate
-//             await appConfig.Validate(ApplicationType.Client);
+            _sessions[deviceConfig.Id] = session;
 
+            var uri = new Uri(deviceConfig.ConnectionString);
+            var ip = uri.Host;
+            var port = uri.Port;
 
-//             var endpoint = CoreClientUtils.SelectEndpoint(endpointUrl, false);
-//             var configuredEndpoint = new ConfiguredEndpoint(null, endpoint);
+            while (!ct.IsCancellationRequested)
+            {
+                int delayMs = deviceConfig.PollIntervalMs > 0
+                    ? deviceConfig.PollIntervalMs
+                    : 1000;
 
-//             _session = await Session.Create(
-//                 appConfig,
-//                 configuredEndpoint,
-//                 false,
-//                 "WMIND-Session",
-//                 60000,
-//                 null,
-//                 null,
-//                 ct);
+                try
+                {
+                    await PollSingleDeviceOnceAsync(deviceConfig, session, ip, port, ct);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Polling error for device {Device}", deviceConfig.Id);
+                }
 
-//             _logger.LogInformation("Connected to OPC UA Server: {Url}", endpointUrl);
-//         }
+                await Task.Delay(delayMs, ct);
+            }
+        }
 
-//         // ------------------------------------------------------
+        private async Task PollSingleDeviceOnceAsync(
+            DeviceConfigurationDto deviceConfig,
+            Session session,
+            string ip,
+            int port,
+            CancellationToken ct)
+        {
+            if (!session.Connected) return;
+            if (deviceConfig.OpcUaNodes == null ||
+                !deviceConfig.OpcUaNodes.Any())
+                return;
 
-//         private async Task ReadValuesAsync(
-//             DeviceConfigurationDto device,
-//             List<OpcSignalDto> signals,
-//             List<NodeId> nodeIds)
-//         {
-//             if (_session == null || !_session.Connected)
-//                 return;
+            var now = DateTime.UtcNow;
+            var payloads = new List<TelemetryPayload>();
 
-//             var readList = new ReadValueIdCollection(
-//                 nodeIds.Select(n => new ReadValueId
-//                 {
-//                     NodeId = n,
-//                     AttributeId = Attributes.Value
-//                 })
-//             );
+            foreach (var node in deviceConfig.OpcUaNodes)
+            {
+                try
+                {
+                    var nodeId = NodeId.Parse(node.NodeId);
+                    var value = session.ReadValue(nodeId);
 
-//             var response = await _session.ReadAsync(
-//                 null,
-//                 0,
-//                 TimestampsToReturn.Source,
-//                 readList,
-//                 CancellationToken.None);
+                    if (value?.Value == null) continue;
 
-//             for (int i = 0; i < response.Results.Count; i++)
-//             {
-//                 var signal = signals[i];
-//                 var value = response.Results[i].Value;
+                    double finalValue = Convert.ToDouble(value.Value);
 
-//                 _logger.LogInformation(
-//                     "[OPC][{Device}] {Signal} ({NodeId}) = {Value}",
-//                     device.DeviceName,
-//                     signal.SignalName,
-//                     signal.NodeId,
-//                     value
-//                 );
-//             }
-//         }
-//     }
-// }
+                    payloads.Add(new TelemetryPayload(
+                        node.SignalId!.Value.ToString(),
+                        finalValue,
+                        now));
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex,
+                        "Failed reading node {Node} for device {Device}",
+                        node.NodeId,
+                        deviceConfig.DeviceName);
+                }
+            }
+
+            if (!payloads.Any()) return;
+
+            try
+            {
+                await _influxDb.WriteAsync(payloads, ct);
+
+                _log.LogInformation(
+                    "Pushed {Count} telemetry points to InfluxDB for device {Device}",
+                    payloads.Count,
+                    deviceConfig.DeviceName);
+
+                lock (_consoleLock)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine(new string('=', 65));
+                    Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
+                    Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
+                    Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
+                    Console.WriteLine(new string('-', 65));
+                    Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
+                    Console.WriteLine(new string('-', 65));
+
+                    foreach (var p in payloads.Take(10))
+                        Console.WriteLine($"  {p.SignalId,-38} {p.Value,10:G6}");
+
+                    if (payloads.Count > 10)
+                        Console.WriteLine($"  ... and {payloads.Count - 10} more");
+
+                    Console.WriteLine(new string('=', 65));
+                }
+            }
+            catch (Exception influxEx)
+            {
+                _log.LogError(influxEx,
+                    "Failed to write {Count} points to InfluxDB for device {Device}",
+                    payloads.Count,
+                    deviceConfig.DeviceName);
+            }
+        }
+
+        private async Task<Session?> ConnectToServerAsync(
+            DeviceConfigurationDto deviceConfig,
+            CancellationToken ct)
+        {
+            try
+            {
+                var endpoint = CoreClientUtils.SelectEndpoint(
+                    deviceConfig.ConnectionString,
+                    true);
+
+                var endpointConfig =
+                    EndpointConfiguration.Create(_applicationConfiguration);
+
+                var configuredEndpoint =
+                    new ConfiguredEndpoint(null, endpoint, endpointConfig);
+
+                var session = await Session.Create(
+                    _applicationConfiguration,
+                    configuredEndpoint,
+                    false,
+                    $"WMIND_SESSION_{deviceConfig.Id}",
+                    60000,
+                    null,
+                    null);
+
+                _log.LogInformation(
+                    "Connected to OPC UA server {Device}",
+                    deviceConfig.DeviceName);
+
+                return session;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex,
+                    "Connection failed for device {Device}",
+                    deviceConfig.DeviceName);
+                return null;
+            }
+        }
+
+        private void CleanupCompletedDevices()
+        {
+            var completed = _deviceTasks
+                .Where(x => x.Value.IsCompleted)
+                .Select(x => x.Key)
+                .ToList();
+
+            foreach (var deviceId in completed)
+            {
+                _deviceTasks.TryRemove(deviceId, out _);
+
+                if (_sessions.TryRemove(deviceId, out var session))
+                {
+                    try
+                    {
+                        session.Close();
+                        session.Dispose();
+                    }
+                    catch { }
+                }
+            }
+        }
+    }
+}
