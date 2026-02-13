@@ -24,31 +24,22 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             if (string.IsNullOrWhiteSpace(gatewayId))
                 throw new ArgumentException("Gateway ID cannot be empty", nameof(gatewayId));
 
-            async Task<HttpResponseMessage> SendRequest()
-            {
-                var token = await _tokenService.GetTokenAsync();
+            // Get token from TokenService instead of accepting it as a parameter
+            var token = await _tokenService.GetTokenAsync();
 
-                _http.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
+            if (string.IsNullOrWhiteSpace(token))
+                throw new InvalidOperationException("TokenService returned an empty token.");
 
-                return await _http.GetAsync($"/api/devices/devices/configurations/gateway/{gatewayId}");
-            }
+            var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"api/devices/devices/configurations/gateway/{gatewayId}"
+            );
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            // First call
-            var response = await SendRequest();
-
-            // If token expired → refresh & retry once
-            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                Console.WriteLine("401 Unauthorized → Refreshing token & retrying...");
-
-                response = await SendRequest();
-            }
-
+            var response = await _http.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
-            var apiResponse = await response.Content
-                .ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
+            var apiResponse = await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
 
             if (apiResponse == null)
                 return Array.Empty<DeviceConfigurationDto>();

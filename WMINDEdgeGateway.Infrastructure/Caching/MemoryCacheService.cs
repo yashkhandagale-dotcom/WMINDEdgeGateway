@@ -1,26 +1,44 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Caching.Memory;
+using System.Text;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace WMINDEdgeGateway.Infrastructure.Caching
 {
-    public class MemoryCacheService
+    public interface IMemoryCacheService
     {
-        private readonly MemoryCache _cache = new(new MemoryCacheOptions());
-        private readonly ConcurrentDictionary<string, bool> _keys = new();
+        void Set<T>(string key, T value, TimeSpan duration);
+        T? Get<T>(string key);
+        void PrintCache();
+    }
 
-        public void Set<T>(string key, T value, TimeSpan ttl)
+    public class MemoryCacheService : IMemoryCacheService
+    {
+        private readonly ConcurrentDictionary<string, (object Value, DateTime Expiry)> _cache = new();
+
+        private static readonly JsonSerializerOptions _jsonOptions = new()
         {
-            _cache.Set(key, value, ttl);
-            _keys[key] = true;
+            WriteIndented = true
+        };
+
+        public void Set<T>(string key, T value, TimeSpan duration)
+        {
+            _cache[key] = (value!, DateTime.UtcNow.Add(duration));
         }
 
         public T? Get<T>(string key)
         {
-            if (_cache.TryGetValue(key, out T value))
-                return value;
-
-            _keys.TryRemove(key, out _);
+            if (_cache.TryGetValue(key, out var entry))
+            {
+                if (entry.Expiry > DateTime.UtcNow)
+                    return (T)entry.Value;
+                _cache.TryRemove(key, out _);
+            }
             return default;
         }
 
@@ -28,32 +46,33 @@ namespace WMINDEdgeGateway.Infrastructure.Caching
         {
             Console.WriteLine("---- Memory Cache Contents ----");
 
-            foreach (var key in _keys.Keys)
+            foreach (var key in _cache.Keys)
             {
-                if (!_cache.TryGetValue(key, out var value))
+                if (!_cache.TryGetValue(key, out var entry) || entry.Expiry <= DateTime.UtcNow)
                     continue;
 
-                Console.WriteLine($"Key: {key}");
+                Console.WriteLine($"Key      : {key}");
+                Console.WriteLine($"Expires  : {entry.Expiry:yyyy-MM-dd HH:mm:ss} UTC");
 
-                if (value is Array arr)
+                if (entry.Value is Array arr)
                 {
-                    Console.WriteLine($"Value: Array ({arr.Length} items)");
+                    Console.WriteLine($"Count    : {arr.Length} items");
+                    Console.WriteLine();
 
+                    int i = 1;
                     foreach (var item in arr)
                     {
-                        Console.WriteLine($"  - {item}");
+                        Console.WriteLine($"  [{i++}] {JsonSerializer.Serialize(item, _jsonOptions)}");
+                        Console.WriteLine();
                     }
                 }
                 else
                 {
-                    Console.WriteLine($"Value: {value}");
+                    Console.WriteLine($"Value    : {JsonSerializer.Serialize(entry.Value, _jsonOptions)}");
                 }
 
-                Console.WriteLine();
-            }                   
-
-            Console.WriteLine("--------------------------------");
+                Console.WriteLine("--------------------------------");
+            }
         }
-
     }
 }

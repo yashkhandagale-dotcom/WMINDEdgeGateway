@@ -1,34 +1,26 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.Worker">
 
-  <ItemGroup>
-    <None Remove="appsettings.json" />
-  </ItemGroup>
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <Content Include="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
+		<ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
+		<ProjectReference Include="..\WMINDEdgeGateway.Infrastructure\WMINDEdgeGateway.Infrastructure.csproj" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
-    <ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
-    <ProjectReference Include="..\WMINDEdgeGateway.Infrastructure\WMINDEdgeGateway.Infrastructure.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<None Update="appsettings.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="InfluxDB.Client" Version="5.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.FileExtensions" Version="10.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.2" />
-    <PackageReference Include="System.Net.Http.Json" Version="10.0.2" />
-  </ItemGroup>
-
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+	<ItemGroup>
+	  <PackageReference Include="InfluxDB.Client" Version="5.0.0" />
+	</ItemGroup>
 
 </Project>
