@@ -19,7 +19,6 @@ var configuration = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     .Build();
 
-// Read config — fail fast if anything is missing
 string gatewayClientId =
     configuration["Gateway:ClientId"]
     ?? throw new Exception("Missing Gateway:ClientId in appsettings.json");
@@ -36,11 +35,9 @@ string deviceApiBaseUrl =
     configuration["DeviceApi:BaseUrl"]
     ?? throw new Exception("Missing DeviceApi:BaseUrl in appsettings.json");
 
-// Construct HttpClients
 var authHttp = new HttpClient { BaseAddress = new Uri(authBaseUrl) };
 var deviceHttp = new HttpClient { BaseAddress = new Uri(deviceApiBaseUrl) };
 
-// Build service graph
 IAuthClient authClient = new AuthClient(authHttp);
 IMemoryCache memoryCache = new MemoryCache(new MemoryCacheOptions());
 var tokenService = new TokenService(authClient, memoryCache, gatewayClientId, gatewayClientSecret);
@@ -48,12 +45,10 @@ var tokenService = new TokenService(authClient, memoryCache, gatewayClientId, ga
 IDeviceServiceClient deviceClient = new DeviceServiceClient(deviceHttp, tokenService);
 var cache = new MemoryCacheService();
 
-// Create InfluxDB service (for Modbus)
 var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
 var influxLogger = loggerFactory.CreateLogger<InfluxDbService>();
 var influxDbService = new InfluxDbService(influxLogger, configuration);
 
-// CancellationToken to gracefully stop polling on Ctrl+C
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
@@ -64,7 +59,6 @@ Console.CancelKeyPress += (_, e) =>
 
 try
 {
-    // Step 1: Acquire token
     Console.WriteLine("Getting token...");
     var token = await tokenService.GetTokenAsync();
 
@@ -76,27 +70,32 @@ try
 
     Console.WriteLine("Token acquired.");
 
-    // Step 2: Fetch device configurations
     var configs = await deviceClient.GetConfigurationsAsync(gatewayClientId);
     Console.WriteLine($"Fetched {configs.Length} configurations.");
 
     var configList = configs.ToList();
 
-    // Step 3: Group by protocol
+    // MODBUS
     var modbusDevices = configList.Where(c => c.Protocol == 1).ToList();
-    var opcuaDevices  = configList.Where(c => c.Protocol == 2).ToList();
 
-    if (!modbusDevices.Any() && !opcuaDevices.Any())
+    // OPC UA
+    var opcuaPollingDevices = configList
+        .Where(c => c.Protocol == 2 && 
+               string.Equals(c.OpcUaMode, "Polling", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    var opcuaPubSubDevices = configList
+        .Where(c => c.Protocol == 2 && 
+               string.Equals(c.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (!modbusDevices.Any() && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any())
     {
         Console.WriteLine("No devices found to poll.");
         return;
     }
 
-    //
-    // =========================
     // MODBUS START
-    // =========================
-    //
     if (modbusDevices.Any())
     {
         Console.WriteLine($"Starting Modbus polling for {modbusDevices.Count} device(s)...");
@@ -114,29 +113,36 @@ try
         _ = Task.Run(() => modbusPoller.StartAsync(cts.Token));
     }
 
-    //
-    // =========================
-    // OPC UA START
-    // =========================
-    //
-    if (opcuaDevices.Any())
+    // OPC UA POLLING START
+    if (opcuaPollingDevices.Any())
     {
-        Console.WriteLine($"Starting OPC UA polling for {opcuaDevices.Count} device(s)...");
+        Console.WriteLine($"Starting OPC UA POLLING for {opcuaPollingDevices.Count} device(s)...");
 
-        cache.Set("OpcUaDevices", opcuaDevices, TimeSpan.FromMinutes(30));
+        cache.Set("OpcUaDevices", opcuaPollingDevices, TimeSpan.FromMinutes(30));
 
         var opcuaLogger = loggerFactory.CreateLogger<OpcUaPollerHostedService>();
 
-        var opcuaPoller = new OpcUaPollerHostedService(
-            opcuaLogger,
-            cache);
+        var opcuaPoller = new OpcUaPollerHostedService(opcuaLogger, cache, influxDbService);
 
         _ = Task.Run(() => opcuaPoller.StartAsync(cts.Token));
     }
 
+    // OPC UA PUBSUB START
+    if (opcuaPubSubDevices.Any())
+    {
+        Console.WriteLine($"Starting OPC UA PUBSUB for {opcuaPubSubDevices.Count} device(s)...");
+
+        cache.Set("OpcUaSubDevices", opcuaPubSubDevices, TimeSpan.FromMinutes(30));
+
+        var opcuaSubLogger = loggerFactory.CreateLogger<OpcUaSubscriptionService>();
+
+        var opcuaSub = new OpcUaSubscriptionService(opcuaSubLogger, cache, influxDbService);
+
+        _ = Task.Run(() => opcuaSub.StartAsync(cts.Token));
+    }
+
     Console.WriteLine("Polling services running. Press Ctrl+C to stop.");
 
-    // Keep alive until cancellation
     await Task.Delay(Timeout.Infinite, cts.Token);
 }
 catch (OperationCanceledException)

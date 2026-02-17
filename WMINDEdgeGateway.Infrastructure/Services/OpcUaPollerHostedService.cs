@@ -34,7 +34,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _log.LogInformation("OPC UA Poller started (Manual Certificate Handling).");
+            _log.LogInformation("OPC UA Poller started.");
 
             _applicationConfiguration = await CreateApplicationConfigurationAsync();
 
@@ -54,6 +54,11 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     foreach (var config in deviceConfigs)
                     {
                         if (config.Protocol != 2) continue;
+
+                        if (!string.Equals(config.OpcUaMode, "Polling",
+                                StringComparison.OrdinalIgnoreCase))
+                            continue;
+
                         if (_deviceTasks.ContainsKey(config.Id)) continue;
 
                         var task = Task.Run(
@@ -74,9 +79,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             }
         }
 
-        // ============================
         // CERTIFICATE HANDLING
-        // ============================
         private async Task<ApplicationConfiguration> CreateApplicationConfigurationAsync()
         {
             var config = new ApplicationConfiguration
@@ -158,9 +161,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             return config;
         }
 
-        // ============================
         // POLLING LOOP
-        // ============================
         private async Task PollLoopForDeviceAsync(
             DeviceConfigurationDto deviceConfig,
             CancellationToken ct)
