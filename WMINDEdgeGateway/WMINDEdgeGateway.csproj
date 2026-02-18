@@ -7,6 +7,14 @@
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+	  <WarningLevel>9999</WarningLevel>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+	  <WarningLevel>9999</WarningLevel>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
 		<ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
