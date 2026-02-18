@@ -38,29 +38,29 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             // GET BACKEND CONFIGS (MODBUS)
             DeviceConfigurationDto[] backendConfigs = Array.Empty<DeviceConfigurationDto>();
 
-            try
-            {
-                var request = new HttpRequestMessage(
-                    HttpMethod.Get,
-                    $"api/devices/devices/configurations/gateway/{gatewayId}"
-                );
+            //try
+            //{
+            //    var request = new HttpRequestMessage(
+            //        HttpMethod.Get,
+            //        $"api/devices/devices/configurations/gateway/{gatewayId}"
+            //    );
 
-                request.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
+            //    request.Headers.Authorization =
+            //        new AuthenticationHeaderValue("Bearer", token);
 
-                var response = await _http.SendAsync(request);
-                response.EnsureSuccessStatusCode();
+            //    var response = await _http.SendAsync(request);
+            //    response.EnsureSuccessStatusCode();
 
-                var apiResponse =
-                    await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
+            //    var apiResponse =
+            //        await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
 
-                if (apiResponse != null && apiResponse.Success && apiResponse.Data != null)
-                    backendConfigs = apiResponse.Data;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Backend config fetch failed: {ex.Message}");
-            }
+            //    if (apiResponse != null && apiResponse.Success && apiResponse.Data != null)
+            //        backendConfigs = apiResponse.Data;
+            //}
+            //catch (Exception ex)
+            //{
+            //    Console.WriteLine($"Backend config fetch failed: {ex.Message}");
+            //}
 
             // GET MOCK OPC CONFIGS
             DeviceConfigurationDto[] mockConfigs = Array.Empty<DeviceConfigurationDto>();

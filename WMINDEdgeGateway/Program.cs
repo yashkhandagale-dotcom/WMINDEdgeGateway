@@ -84,12 +84,12 @@ try
                string.Equals(c.OpcUaMode, "Polling", StringComparison.OrdinalIgnoreCase))
         .ToList();
 
-    // var opcuaPubSubDevices = configList
-    //     .Where(c => c.Protocol == 2 && 
-    //            string.Equals(c.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase))
-    //     .ToList();
+    var opcuaPubSubDevices = configList
+        .Where(c => c.Protocol == 2 &&
+               string.Equals(c.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase))
+        .ToList();
 
-    if (!modbusDevices.Any() && !opcuaPollingDevices.Any())
+    if (!modbusDevices.Any() && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any())
     {
         Console.WriteLine("No devices found to poll.");
         return;
@@ -127,19 +127,19 @@ try
         _ = Task.Run(() => opcuaPoller.StartAsync(cts.Token));
     }
 
-    // OPC UA PUBSUB START
-    // if (opcuaPubSubDevices.Any())
-    // {
-    //     Console.WriteLine($"Starting OPC UA PUBSUB for {opcuaPubSubDevices.Count} device(s)...");
+    //OPC UA PUBSUB START
+     if (opcuaPubSubDevices.Any())
+    {
+        Console.WriteLine($"Starting OPC UA PUBSUB for {opcuaPubSubDevices.Count} device(s)...");
 
-    //     cache.Set("OpcUaSubDevices", opcuaPubSubDevices, TimeSpan.FromMinutes(30));
+        cache.Set("OpcUaSubDevices", opcuaPubSubDevices, TimeSpan.FromMinutes(30));
 
-    //     var opcuaSubLogger = loggerFactory.CreateLogger<OpcUaSubscriptionService>();
+        var opcuaSubLogger = loggerFactory.CreateLogger<OpcUaSubscriptionService>();
 
-    //     var opcuaSub = new OpcUaSubscriptionService(opcuaSubLogger, cache, influxDbService);
+        var opcuaSub = new OpcUaSubscriptionService(opcuaSubLogger, cache, influxDbService);
 
-    //     _ = Task.Run(() => opcuaSub.StartAsync(cts.Token));
-    // }
+        _ = Task.Run(() => opcuaSub.StartAsync(cts.Token));
+    }
 
     Console.WriteLine("Polling services running. Press Ctrl+C to stop.");
 
