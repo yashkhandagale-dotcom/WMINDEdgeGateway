@@ -177,9 +177,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             while (!ct.IsCancellationRequested)
             {
-                int delayMs = deviceConfig.PollIntervalMs > 0
-                    ? deviceConfig.PollIntervalMs
-                    : 1000;
+                int delayMs = deviceConfig.PollIntervalMs ?? 1000;
 
                 try
                 {
