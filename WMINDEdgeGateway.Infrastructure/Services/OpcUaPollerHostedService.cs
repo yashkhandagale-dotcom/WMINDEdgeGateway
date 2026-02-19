@@ -247,7 +247,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 {
                     Console.WriteLine();
                     Console.WriteLine(new string('=', 65));
-                    Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
+                    Console.WriteLine($"Device    : {deviceConfig.DeviceName}");
                     Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
                     Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
                     Console.WriteLine(new string('-', 65));
