@@ -67,7 +67,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 var points = payloads.Select(p => PointData
                     .Measurement("modbus_telemetry")
                     .Tag("signal_id", p.SignalId)
-                    .Field("value", p.Value)
+                    .Field("value", Convert.ToDouble(p.Value))
                     .Timestamp(p.Timestamp, WritePrecision.Ms)
                 ).ToList();
 

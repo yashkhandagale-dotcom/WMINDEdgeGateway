@@ -19,7 +19,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
     /// </summary>
     public record TelemetryPayload(
         string SignalId,
-        double Value,
+        object Value,
         DateTime Timestamp
     );
 

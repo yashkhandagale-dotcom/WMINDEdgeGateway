@@ -71,7 +71,7 @@ namespace WMINDEdgeGateway.Application.DTOs
         [JsonPropertyName("signalId")]
         public Guid? SignalId { get; set; }
 
-        [JsonPropertyName("displayName")]
+        [JsonPropertyName("signalName")]
         public string DisplayName { get; set; }
 
         [JsonPropertyName("dataType")]
@@ -80,8 +80,8 @@ namespace WMINDEdgeGateway.Application.DTOs
         [JsonPropertyName("unit")]
         public string Unit { get; set; }
 
-        [JsonPropertyName("isHealthy")]
-        public bool IsHealthy { get; set; }
+        [JsonPropertyName("scalingFactor")]
+        public double ScalingFactor { get; set; } = 1;
     }
 
     public class DeviceConfigurationDto

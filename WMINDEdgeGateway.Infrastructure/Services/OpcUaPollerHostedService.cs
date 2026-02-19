@@ -61,9 +61,11 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                         if (_deviceTasks.ContainsKey(config.Id)) continue;
 
+                        var capturedConfig = config;
+
                         var task = Task.Run(
-                            () => PollLoopForDeviceAsync(config, stoppingToken),
-                            stoppingToken);
+                        () => RunPollingWithRetryAsync(capturedConfig, stoppingToken),
+                        stoppingToken);
 
                         _deviceTasks.TryAdd(config.Id, task);
                     }
@@ -78,6 +80,72 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 await Task.Delay(5000, stoppingToken);
             }
         }
+
+        private async Task RunPollingWithRetryAsync(DeviceConfigurationDto deviceConfig,CancellationToken ct)
+        {
+            int attempt = 0;
+            const int maxRetries = 5;
+            const int retryDelaySeconds = 10;
+
+            while (!ct.IsCancellationRequested)
+            {
+                attempt++;
+
+                _log.LogInformation(
+                "Polling device {Device} — attempt {Attempt}/{Max}",
+                deviceConfig.DeviceName,
+                attempt,
+                maxRetries);
+
+            try
+            {
+                await PollLoopForDeviceAsync(deviceConfig, ct);
+
+                if (ct.IsCancellationRequested) break;
+
+                _log.LogWarning(
+                    "Polling loop ended for {Device}. Retrying in {Delay}s...",
+                    deviceConfig.DeviceName,
+                    retryDelaySeconds);
+
+                attempt = 0;   // reset after successful run
+        }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex,
+                "Polling failed for device {Device} on attempt {Attempt}",
+                deviceConfig.DeviceName,
+                attempt);
+            }
+
+            if (attempt >= maxRetries)
+            {
+                _log.LogError(
+                "Device {Device} exhausted {Max} retries. Giving up.",
+                deviceConfig.DeviceName,
+                maxRetries);
+                break;
+            }
+
+            try
+            {
+                await Task.Delay(
+                    TimeSpan.FromSeconds(retryDelaySeconds),
+                    ct);
+            }   
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        CleanupCompletedDevices();
+    }
+
 
         // CERTIFICATE HANDLING
         private async Task<ApplicationConfiguration> CreateApplicationConfigurationAsync()
@@ -167,7 +235,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             CancellationToken ct)
         {
             var session = await ConnectToServerAsync(deviceConfig, ct);
-            if (session == null) return;
+
+            if (session == null)
+                throw new Exception($"Failed to connect to {deviceConfig.ConnectionString}");
+
 
             _sessions[deviceConfig.Id] = session;
 
@@ -216,7 +287,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                     if (value?.Value == null) continue;
 
-                    double finalValue = Convert.ToDouble(value.Value);
+                    object finalValue = ConvertOpcValue(value.Value, node.DataType, node.ScalingFactor);
 
                     payloads.Add(new TelemetryPayload(
                         node.SignalId!.Value.ToString(),
@@ -236,6 +307,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             try
             {
+                foreach (var payload in payloads)
+                {
+                    _log.LogWarning($"INFLUX WRITE → {payload.SignalId} = {payload.Value} TYPE={payload.Value?.GetType()}");
+                }
                 await _influxDb.WriteAsync(payloads, ct);
 
                 _log.LogInformation(
@@ -271,6 +346,38 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     deviceConfig.DeviceName);
             }
         }
+
+        private object ConvertOpcValue(object raw, string? dataType, double? scale)
+        {
+            if (raw == null) throw new ArgumentNullException(nameof(raw));
+
+            dataType = (dataType ?? "double").Trim().ToLowerInvariant();
+
+            object result = dataType switch
+            {
+            "int" => Convert.ToInt32(raw),
+            "float" => Convert.ToSingle(raw),
+            "double" => Convert.ToDouble(raw),
+            _ => Convert.ToDouble(raw)
+        };
+
+            if (scale.HasValue && scale.Value != 1)
+            {
+                double scaled = Convert.ToDouble(result) * scale.Value;
+
+                result = dataType switch
+                {
+                    "int" => (object)(int)scaled,
+                    "float" => (float)scaled,
+                    "double" => scaled,
+                    _ => scaled
+                };
+            }
+            Console.WriteLine($"CONVERT RESULT TYPE = {result.GetType()}");
+
+            return result;
+        }
+
 
         private async Task<Session?> ConnectToServerAsync(
             DeviceConfigurationDto deviceConfig,
