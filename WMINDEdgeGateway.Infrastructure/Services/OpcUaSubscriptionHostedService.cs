@@ -1,3 +1,4 @@
+﻿using InfluxDB.Client.Api.Domain;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opc.Ua;
@@ -9,21 +10,22 @@ using WMINDEdgeGateway.Infrastructure.Caching;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
-    public class OpcUaPollerHostedService : BackgroundService
+    public class OpcUaSubscriptionService : BackgroundService
     {
-        private readonly ILogger<OpcUaPollerHostedService> _log;
+        private readonly ILogger<OpcUaSubscriptionService> _log;
         private readonly MemoryCacheService _cache;
         private readonly IInfluxDbService _influxDb;
 
         private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
+        private readonly ConcurrentDictionary<Guid, Subscription> _subscriptions = new();
         private readonly ConcurrentDictionary<Guid, Task> _deviceTasks = new();
 
         private static readonly object _consoleLock = new();
 
         private ApplicationConfiguration? _applicationConfiguration;
 
-        public OpcUaPollerHostedService(
-            ILogger<OpcUaPollerHostedService> log,
+        public OpcUaSubscriptionService(
+            ILogger<OpcUaSubscriptionService> log,
             MemoryCacheService cache,
             IInfluxDbService influxDb)
         {
@@ -34,7 +36,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _log.LogInformation("OPC UA Poller started.");
+            _log.LogInformation("OPC UA Subscription (PubSub) service started.");
 
             _applicationConfiguration = await CreateApplicationConfigurationAsync();
 
@@ -43,7 +45,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 try
                 {
                     var deviceConfigs =
-                        _cache.Get<List<DeviceConfigurationDto>>("OpcUaDevices");
+                        _cache.Get<List<DeviceConfigurationDto>>("OpcUaSubDevices");
 
                     if (deviceConfigs == null || !deviceConfigs.Any())
                     {
@@ -55,14 +57,14 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     {
                         if (config.Protocol != 2) continue;
 
-                        if (!string.Equals(config.OpcUaMode, "Polling",
+                        if (!string.Equals(config.OpcUaMode, "PubSub",
                                 StringComparison.OrdinalIgnoreCase))
                             continue;
 
                         if (_deviceTasks.ContainsKey(config.Id)) continue;
 
                         var task = Task.Run(
-                            () => PollLoopForDeviceAsync(config, stoppingToken),
+                            () => SubscribeToDeviceAsync(config, stoppingToken),
                             stoppingToken);
 
                         _deviceTasks.TryAdd(config.Id, task);
@@ -72,7 +74,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 }
                 catch (Exception ex)
                 {
-                    _log.LogError(ex, "OPC UA Poll manager error.");
+                    _log.LogError(ex, "OPC UA Subscription manager error.");
                 }
 
                 await Task.Delay(5000, stoppingToken);
@@ -84,9 +86,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         {
             var config = new ApplicationConfiguration
             {
-                ApplicationName = "WMIND Edge OPC UA Client",
+                ApplicationName = "WMIND Edge OPC UA PubSub Client",
                 ApplicationType = ApplicationType.Client,
-                ApplicationUri = $"urn:{Utils.GetHostName()}:WMIND:Edge",
+                ApplicationUri = $"urn:{Utils.GetHostName()}:WMIND:Edge:PubSub",
 
                 SecurityConfiguration = new SecurityConfiguration
                 {
@@ -94,7 +96,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     {
                         StoreType = "Directory",
                         StorePath = "pki/own",
-                        SubjectName = "CN=WMIND Edge Gateway Client"
+                        SubjectName = "CN=WMIND Edge Gateway PubSub Client"
                     },
 
                     TrustedPeerCertificates = new CertificateTrustList
@@ -146,7 +148,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     null,
                     config.ApplicationUri,
                     config.ApplicationName,
-                    "CN=WMIND Edge Gateway Client",
+                    "CN=WMIND Edge Gateway PubSub Client",
                     null,
                     2048,
                     DateTime.UtcNow.AddDays(-1),
@@ -161,8 +163,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             return config;
         }
 
-        // POLLING LOOP
-        private async Task PollLoopForDeviceAsync(
+        // SUBSCRIPTION LOOP
+        private async Task SubscribeToDeviceAsync(
             DeviceConfigurationDto deviceConfig,
             CancellationToken ct)
         {
@@ -171,103 +173,180 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             _sessions[deviceConfig.Id] = session;
 
-            var uri = new Uri(deviceConfig.ConnectionString);
-            var ip = uri.Host;
-            var port = uri.Port;
-
-            while (!ct.IsCancellationRequested)
+            var subscription = CreateSubscription(deviceConfig, session);
+            if (subscription == null)
             {
-                int delayMs = deviceConfig.PollIntervalMs ?? 1000;
+                _log.LogError("Failed to create subscription for device {Device}",
+                    deviceConfig.DeviceName);
+                return;
+            }
 
-                try
-                {
-                    await PollSingleDeviceOnceAsync(deviceConfig, session, ip, port, ct);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogError(ex, "Polling error for device {Device}", deviceConfig.Id);
-                }
+            _subscriptions[deviceConfig.Id] = subscription;
 
-                await Task.Delay(delayMs, ct);
+            _log.LogInformation(
+                "Subscription active for device {Device}. Waiting for data changes...",
+                deviceConfig.DeviceName);
+
+            while (!ct.IsCancellationRequested && session.Connected)
+            {
+                await Task.Delay(1000, ct);
             }
         }
 
-        private async Task PollSingleDeviceOnceAsync(
+        private Subscription? CreateSubscription(
             DeviceConfigurationDto deviceConfig,
-            Session session,
-            string ip,
-            int port,
-            CancellationToken ct)
+            Session session)
         {
-            if (!session.Connected) return;
-            if (deviceConfig.OpcUaNodes == null ||
-                !deviceConfig.OpcUaNodes.Any())
-                return;
-
-            var now = DateTime.UtcNow;
-            var payloads = new List<TelemetryPayload>();
-
-            foreach (var node in deviceConfig.OpcUaNodes)
-            {
-                try
-                {
-                    var nodeId = NodeId.Parse(node.NodeId);
-                    var value = session.ReadValue(nodeId);
-
-                    if (value?.Value == null) continue;
-
-                    double finalValue = Convert.ToDouble(value.Value);
-
-                    payloads.Add(new TelemetryPayload(
-                        node.SignalId!.Value.ToString(),
-                        finalValue,
-                        now));
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex,
-                        "Failed reading node {Node} for device {Device}",
-                        node.NodeId,
-                        deviceConfig.DeviceName);
-                }
-            }
-
-            if (!payloads.Any()) return;
-
             try
             {
-                await _influxDb.WriteAsync(payloads, ct);
+                if (deviceConfig.OpcUaNodes == null || !deviceConfig.OpcUaNodes.Any())
+                {
+                    _log.LogWarning("Device {Device} has no OPC UA nodes configured.",
+                        deviceConfig.DeviceName);
+                    return null;
+                }
+
+                var subscription = new Subscription(session.DefaultSubscription)
+                {
+                    PublishingInterval = deviceConfig.PollIntervalMs ?? 1000,
+                    DisplayName = $"Subscription_{deviceConfig.DeviceName}"
+                };
+
+                session.AddSubscription(subscription);
+                subscription.Create();
+
+                var uri = new Uri(deviceConfig.ConnectionString);
+                var ip = uri.Host;
+                var port = uri.Port;
+
+                foreach (var node in deviceConfig.OpcUaNodes)
+                {
+                    try
+                    {
+                        var nodeId = NodeId.Parse(node.NodeId);
+
+                        var monitoredItem = new MonitoredItem(subscription.DefaultItem)
+                        {
+                            DisplayName = node.NodeId,
+                            StartNodeId = nodeId,
+                            SamplingInterval = deviceConfig.PollIntervalMs ?? 1000,
+                            AttributeId = Attributes.Value
+                        };
+
+                        // Capture per-node context for the notification closure
+                        var capturedConfig = deviceConfig;
+                        var capturedNode = node;
+                        var capturedIp = ip;
+                        var capturedPort = port;
+
+                        monitoredItem.Notification += (item, e) =>
+                            OnNotification(capturedConfig, capturedNode, item, e,
+                                capturedIp, capturedPort);
+
+                        subscription.AddItem(monitoredItem);
+
+                        _log.LogInformation(
+                            "Added monitored item: {NodeId} for device {Device}",
+                            node.NodeId, deviceConfig.DeviceName);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex,
+                            "Failed to add monitored item {NodeId} for device {Device}",
+                            node.NodeId, deviceConfig.DeviceName);
+                    }
+                }
+
+                subscription.ApplyChanges();
 
                 _log.LogInformation(
-                    "Pushed {Count} telemetry points to InfluxDB for device {Device}",
-                    payloads.Count,
+                    "Subscription created with {Count} monitored items for device {Device}",
+                    subscription.MonitoredItemCount, deviceConfig.DeviceName);
+
+                return subscription;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Failed to create subscription for device {Device}",
+                    deviceConfig.DeviceName);
+                return null;
+            }
+        }
+
+        private void OnNotification(
+            DeviceConfigurationDto deviceConfig,
+            OpcUaNodeDto node,
+            MonitoredItem item,
+            MonitoredItemNotificationEventArgs e,
+            string ip,
+            int port)
+        {
+            foreach (var value in item.DequeueValues())
+            {
+                if (value?.Value == null) continue;
+
+                var now = DateTime.UtcNow;
+
+                double finalValue;
+                try
+                {
+                    finalValue = Convert.ToDouble(value.Value);
+                }
+                catch
+                {
+                    _log.LogWarning(
+                        "Could not convert value for node {NodeId} on device {Device}",
+                        node.NodeId, deviceConfig.DeviceName);
+                    continue;
+                }
+
+                var payload = new TelemetryPayload(
+                    node.SignalId!.Value.ToString(),
+                    finalValue,
+                    now);
+
+                // Fire-and-forget write — keeps notification handler non-async
+                _ = WriteToInfluxAsync(deviceConfig, payload, now, ip, port, value);
+            }
+        }
+
+        private async Task WriteToInfluxAsync(
+            DeviceConfigurationDto deviceConfig,
+            TelemetryPayload payload,
+            DateTime now,
+            string ip,
+            int port,
+            DataValue value)
+        {
+            try
+            {
+                await _influxDb.WriteAsync(new List<TelemetryPayload> { payload },
+                    CancellationToken.None);
+
+                _log.LogInformation(
+                    "Pushed PubSub telemetry point to InfluxDB for device {Device}",
                     deviceConfig.DeviceName);
 
                 lock (_consoleLock)
                 {
                     Console.WriteLine();
                     Console.WriteLine(new string('=', 65));
-                    Console.WriteLine($"Device    : {deviceConfig.DeviceName}");
+                    Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
                     Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
-                    Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
+                    Console.WriteLine($"Mode      : PubSub (subscription notification)");
                     Console.WriteLine(new string('-', 65));
                     Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
                     Console.WriteLine(new string('-', 65));
-
-                    foreach (var p in payloads.Take(10))
-                        Console.WriteLine($"  {p.SignalId,-38} {p.Value,10:G6}");
-
-                    if (payloads.Count > 10)
-                        Console.WriteLine($"  ... and {payloads.Count - 10} more");
-
+                    Console.WriteLine($"  {payload.SignalId,-38} {payload.Value,10:G6}");
+                    Console.WriteLine($"  Source TS : {value.SourceTimestamp:O}");
+                    Console.WriteLine($"  Status    : {value.StatusCode}");
                     Console.WriteLine(new string('=', 65));
                 }
             }
-            catch (Exception influxEx)
+            catch (Exception ex)
             {
-                _log.LogError(influxEx,
-                    "Failed to write {Count} points to InfluxDB for device {Device}",
-                    payloads.Count,
+                _log.LogError(ex,
+                    "Failed to write PubSub point to InfluxDB for device {Device}",
                     deviceConfig.DeviceName);
             }
         }
@@ -292,13 +371,13 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     _applicationConfiguration,
                     configuredEndpoint,
                     false,
-                    $"WMIND_SESSION_{deviceConfig.Id}",
+                    $"WMIND_PUBSUB_SESSION_{deviceConfig.Id}",
                     60000,
                     null,
                     null);
 
                 _log.LogInformation(
-                    "Connected to OPC UA server {Device}",
+                    "Connected to OPC UA server {Device} for PubSub",
                     deviceConfig.DeviceName);
 
                 return session;
@@ -322,6 +401,16 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             foreach (var deviceId in completed)
             {
                 _deviceTasks.TryRemove(deviceId, out _);
+
+                if (_subscriptions.TryRemove(deviceId, out var subscription))
+                {
+                    try
+                    {
+                        subscription.Delete(true);
+                        subscription.Dispose();
+                    }
+                    catch { }
+                }
 
                 if (_sessions.TryRemove(deviceId, out var session))
                 {

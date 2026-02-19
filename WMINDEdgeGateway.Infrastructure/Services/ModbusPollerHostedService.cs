@@ -65,7 +65,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 {
                     try
                     {
-                        var deviceConfigs = _cache.Get<List<DeviceConfigurationDto>>("DeviceConfigurations");
+                        var deviceConfigs = _cache.Get<List<DeviceConfigurationDto>>("ModbusDevices");
 
                         if (deviceConfigs == null || !deviceConfigs.Any())
                         {

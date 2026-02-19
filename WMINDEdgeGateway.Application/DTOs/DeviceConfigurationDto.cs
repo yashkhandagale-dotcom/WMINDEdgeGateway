@@ -63,6 +63,27 @@ namespace WMINDEdgeGateway.Application.DTOs
         public DeviceRegisterDto[] Registers { get; set; } = Array.Empty<DeviceRegisterDto>();
     }
 
+    public class OpcUaNodeDto
+    {   
+        [JsonPropertyName("nodeId")]
+        public string NodeId { get; set; }
+
+        [JsonPropertyName("signalId")]
+        public Guid? SignalId { get; set; }
+
+        [JsonPropertyName("displayName")]
+        public string DisplayName { get; set; }
+
+        [JsonPropertyName("dataType")]
+        public string DataType { get; set; }
+
+        [JsonPropertyName("unit")]
+        public string Unit { get; set; }
+
+        [JsonPropertyName("isHealthy")]
+        public bool IsHealthy { get; set; }
+    }
+
     public class DeviceConfigurationDto
     {
         [JsonPropertyName("deviceId")]
@@ -97,5 +118,13 @@ namespace WMINDEdgeGateway.Application.DTOs
 
         [JsonPropertyName("slaves")]
         public DeviceSlaveDto[] Slaves { get; set; } = Array.Empty<DeviceSlaveDto>();
+
+        [JsonPropertyName("opcUaNodes")]
+        public OpcUaNodeDto[] OpcUaNodes { get; set; } = Array.Empty<OpcUaNodeDto>();
+
+        [JsonPropertyName("opcUaMode")]
+        public string? OpcUaMode { get; set; }
+
+
     }
 }

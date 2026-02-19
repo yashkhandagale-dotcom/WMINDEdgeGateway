@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -13,8 +13,9 @@ using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
 using WMINDEdgeGateway.Infrastructure.Services;
 
-Console.WriteLine("Edge Gateway Starting...Fetching from influx publishing it to queue");
+Console.WriteLine("Edge Gateway Starting... Fetching from InfluxDB and publishing to queue.");
 
+// ── Configuration ────────────────────────────────────────────────────────────
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
@@ -30,146 +31,158 @@ string gatewayClientSecret =
 
 string authBaseUrl =
     configuration["Auth:BaseUrl"]
-    ?? throw new Exception("Missing Services:AuthBaseUrl in appsettings.json");
+    ?? throw new Exception("Missing Auth:BaseUrl in appsettings.json");
 
 string deviceApiBaseUrl =
     configuration["DeviceApi:BaseUrl"]
-    ?? throw new Exception("Missing Services:DeviceApiBaseUrl in appsettings.json");
+    ?? throw new Exception("Missing DeviceApi:BaseUrl in appsettings.json");
 
-var authHttp = new HttpClient { BaseAddress = new Uri(authBaseUrl) };
+// ── HTTP Clients & Core Services ─────────────────────────────────────────────
+var authHttp   = new HttpClient { BaseAddress = new Uri(authBaseUrl) };
 var deviceHttp = new HttpClient { BaseAddress = new Uri(deviceApiBaseUrl) };
 
-IAuthClient authClient = new AuthClient(authHttp);
-IMemoryCache memoryCache = new MemoryCache(new MemoryCacheOptions());
-var tokenService = new TokenService(authClient, memoryCache, gatewayClientId, gatewayClientSecret);
-
+IAuthClient authClient            = new AuthClient(authHttp);
+IMemoryCache memoryCache          = new MemoryCache(new MemoryCacheOptions());
+var tokenService                  = new TokenService(authClient, memoryCache, gatewayClientId, gatewayClientSecret);
 IDeviceServiceClient deviceClient = new DeviceServiceClient(deviceHttp, tokenService);
-var cache = new MemoryCacheService();
+var cache                         = new MemoryCacheService();
 
+// ── Logging ───────────────────────────────────────────────────────────────────
 var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Debug));
 
-var influxLogger = loggerFactory.CreateLogger<InfluxDbService>();
+// ── InfluxDB ──────────────────────────────────────────────────────────────────
+var influxLogger    = loggerFactory.CreateLogger<InfluxDbService>();
 var influxDbService = new InfluxDbService(influxLogger, configuration);
 
-var influxUrl = configuration["InfluxDB:Url"] ?? "http://localhost:8087";
-var influxToken = configuration["InfluxDB:Token"];
-var influxOrg = configuration["InfluxDB:Org"] ?? "Wonderbiz";
-
-var influxOptions = new InfluxDBClientOptions(influxUrl)
-{
-    Token = influxToken,
-    Org = influxOrg
-};
-var influxClient = new InfluxDBClient(influxOptions);
+var influxUrl     = configuration["InfluxDB:Url"]   ?? "http://localhost:8087";
+var influxToken   = configuration["InfluxDB:Token"];
+var influxOrg     = configuration["InfluxDB:Org"]   ?? "Wonderbiz";
+var influxOptions = new InfluxDBClientOptions(influxUrl) { Token = influxToken, Org = influxOrg };
+var influxClient  = new InfluxDBClient(influxOptions);
 Console.WriteLine($"InfluxDB client initialized: {influxUrl}");
 
-var pollerLogger = loggerFactory.CreateLogger<ModbusPollerHostedService>();
-var modbusPoller = new ModbusPollerHostedService(pollerLogger, configuration, cache, influxDbService);
-
-var bridgeLogger = loggerFactory.CreateLogger<InfluxToRabbitMqBridgeService>();
+// ── Bridge Service (InfluxDB → RabbitMQ) ─────────────────────────────────────
+var bridgeLogger  = loggerFactory.CreateLogger<InfluxToRabbitMqBridgeService>();
 var bridgeService = new InfluxToRabbitMqBridgeService(bridgeLogger, configuration, influxClient);
 
+// ── Cancellation ──────────────────────────────────────────────────────────────
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
-    Console.WriteLine("\n⛔ Shutting down...");
+    Console.WriteLine("\nShutting down...");
     cts.Cancel();
 };
 
 try
 {
-    Console.WriteLine("🔑 Getting token...");
+    Console.WriteLine("Getting token...");
     var token = await tokenService.GetTokenAsync();
-
     if (string.IsNullOrEmpty(token))
     {
-        Console.WriteLine("❌ Error: Failed to retrieve a valid token.");
+        Console.WriteLine("Error: Failed to retrieve a valid token.");
         return;
     }
+    Console.WriteLine("Token acquired.");
 
-    Console.WriteLine("✅ Token acquired.");
-
+    // ── Fetch & Cache Device Configurations ───────────────────────────────────
     var configs = await deviceClient.GetConfigurationsAsync(gatewayClientId);
-    Console.WriteLine($"📋 Fetched {configs.Length} configurations.");
+    Console.WriteLine($"Fetched {configs.Length} configuration(s).");
 
     var configList = configs.ToList();
     cache.Set("DeviceConfigurations", configList, TimeSpan.FromMinutes(30));
-    Console.WriteLine("💾 Configurations cached in memory.");
+    Console.WriteLine("Configurations cached in memory.");
     cache.PrintCache();
 
-    var modbusDevices = configList.Where(c => c.Protocol == 1).ToList();
-    var opcuaDevices = configList.Where(c => c.Protocol == 2).ToList();
+    // ── Partition Devices by Protocol / Mode ──────────────────────────────────
+    var modbusDevices = configList
+        .Where(c => c.Protocol == 1)
+        .ToList();
 
-    if (opcuaDevices.Any())
-        Console.WriteLine($"⚠️  Skipping {opcuaDevices.Count} OPC-UA device(s) — not implemented yet.");
+    var opcuaPollingDevices = configList
+        .Where(c => c.Protocol == 2 &&
+                    string.Equals(c.OpcUaMode, "Polling", StringComparison.OrdinalIgnoreCase))
+        .ToList();
 
-    if (!modbusDevices.Any())
+    var opcuaPubSubDevices = configList
+        .Where(c => c.Protocol == 2 &&
+                    string.Equals(c.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (!modbusDevices.Any() && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any())
     {
-        Console.WriteLine("⚠️  No Modbus devices found. Nothing to poll.");
+        Console.WriteLine("No devices found to poll. Exiting.");
         return;
     }
 
-    Console.WriteLine($"🔄 Starting Modbus polling for {modbusDevices.Count} device(s)...");
+    // ── Modbus ────────────────────────────────────────────────────────────────
+    if (modbusDevices.Any())
+    {
+        Console.WriteLine($"Starting Modbus polling for {modbusDevices.Count} device(s)...");
+        cache.Set("ModbusDevices", modbusDevices, TimeSpan.FromMinutes(30));
 
-    cache.Set("DeviceConfigurations", modbusDevices, TimeSpan.FromMinutes(30));
+        var modbusLogger = loggerFactory.CreateLogger<ModbusPollerHostedService>();
+        var modbusPoller = new ModbusPollerHostedService(modbusLogger, configuration, cache, influxDbService);
+        _ = Task.Run(() => modbusPoller.StartAsync(cts.Token));
+        Console.WriteLine("Modbus poller started -> writing to InfluxDB.");
+    }
 
-    // Start the Modbus poller
-    await modbusPoller.StartAsync(cts.Token);
-    Console.WriteLine("✅ Modbus poller initialized → will write to InfluxDB");
+    // ── OPC-UA Polling ────────────────────────────────────────────────────────
+    if (opcuaPollingDevices.Any())
+    {
+        Console.WriteLine($"Starting OPC-UA Polling for {opcuaPollingDevices.Count} device(s)...");
+        cache.Set("OpcUaDevices", opcuaPollingDevices, TimeSpan.FromMinutes(30));
 
-    // Start the Bridge service
+        var opcuaLogger = loggerFactory.CreateLogger<OpcUaPollerHostedService>();
+        var opcuaPoller = new OpcUaPollerHostedService(opcuaLogger, cache, influxDbService);
+        _ = Task.Run(() => opcuaPoller.StartAsync(cts.Token));
+        Console.WriteLine("OPC-UA poller started -> writing to InfluxDB.");
+    }
+
+    // ── OPC-UA PubSub ─────────────────────────────────────────────────────────
+    if (opcuaPubSubDevices.Any())
+    {
+        Console.WriteLine($"Starting OPC-UA PubSub for {opcuaPubSubDevices.Count} device(s)...");
+        cache.Set("OpcUaSubDevices", opcuaPubSubDevices, TimeSpan.FromMinutes(30));
+
+        var opcuaSubLogger = loggerFactory.CreateLogger<OpcUaSubscriptionService>();
+        var opcuaSub       = new OpcUaSubscriptionService(opcuaSubLogger, cache, influxDbService);
+        _ = Task.Run(() => opcuaSub.StartAsync(cts.Token));
+        Console.WriteLine("OPC-UA subscription service started -> writing to InfluxDB.");
+    }
+
+    // ── Bridge (InfluxDB → RabbitMQ) ──────────────────────────────────────────
     await bridgeService.StartAsync(cts.Token);
-    Console.WriteLine("✅ Bridge service initialized → will read InfluxDB and push to RabbitMQ");
+    Console.WriteLine("Bridge service started -> reading InfluxDB and pushing to RabbitMQ.");
 
     Console.WriteLine("\n" + new string('=', 70));
-    Console.WriteLine("                     EDGE GATEWAY RUNNING                     ");
+    Console.WriteLine("                    EDGE GATEWAY RUNNING                          ");
     Console.WriteLine(new string('=', 70));
-    Console.WriteLine("  Data Flow: Modbus → InfluxDB → RabbitMQ → Cloud");
+    Console.WriteLine("  Data Flow: Modbus / OPC-UA -> InfluxDB -> RabbitMQ -> Cloud");
     Console.WriteLine("  Press Ctrl+C to stop.");
     Console.WriteLine(new string('=', 70) + "\n");
 
-    // ⭐ KEY FIX: Start the actual background execution tasks using reflection
-    var modbusExecuteMethod = typeof(ModbusPollerHostedService)
-        .GetMethod("ExecuteAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-    var bridgeExecuteMethod = typeof(InfluxToRabbitMqBridgeService)
-        .GetMethod("ExecuteAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-    var modbusTask = (Task?)modbusExecuteMethod?.Invoke(modbusPoller, new object[] { cts.Token }) ?? Task.CompletedTask;
-    var bridgeTask = (Task?)bridgeExecuteMethod?.Invoke(bridgeService, new object[] { cts.Token }) ?? Task.CompletedTask;
-
-    Console.WriteLine("🚀 Background tasks started!\n");
-
-    // Wait for cancellation
-    await Task.WhenAny(
-        Task.Delay(Timeout.Infinite, cts.Token),
-        modbusTask,
-        bridgeTask
-    );
+    await Task.Delay(Timeout.Infinite, cts.Token);
 }
 catch (OperationCanceledException)
 {
-    Console.WriteLine("\n⛔ Gateway stopped by user.");
+    Console.WriteLine("\nGateway stopped by user.");
 }
 catch (HttpRequestException ex)
 {
-    Console.WriteLine($"❌ HTTP error: {ex.Message}");
+    Console.WriteLine($"HTTP error: {ex.Message}");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"❌ Unexpected error: {ex.Message}");
+    Console.WriteLine($"Unexpected error: {ex.Message}");
     Console.WriteLine(ex.StackTrace);
 }
 finally
 {
-    Console.WriteLine("\n🛑 Stopping services...");
-
-    try { await bridgeService.StopAsync(cts.Token); } catch { }
-    try { await modbusPoller.StopAsync(cts.Token); } catch { }
-
+    Console.WriteLine("\nStopping services...");
+    try { await bridgeService.StopAsync(CancellationToken.None); } catch { }
     bridgeService.Dispose();
-    influxDbService?.Dispose();
     influxClient?.Dispose();
-
-    Console.WriteLine("✅ Services stopped and disposed.");
+    influxDbService?.Dispose();
+    Console.WriteLine("All services stopped and disposed.");
 }
