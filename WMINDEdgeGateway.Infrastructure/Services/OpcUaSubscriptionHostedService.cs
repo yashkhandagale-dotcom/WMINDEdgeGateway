@@ -1,5 +1,4 @@
 ﻿using InfluxDB.Client.Api.Domain;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opc.Ua;
 using Opc.Ua.Client;
@@ -10,7 +9,7 @@ using WMINDEdgeGateway.Infrastructure.Caching;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
-    public class OpcUaSubscriptionService : BackgroundService
+    public class OpcUaSubscriptionService 
     {
         private readonly ILogger<OpcUaSubscriptionService> _log;
         private readonly MemoryCacheService _cache;
@@ -34,51 +33,78 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             _influxDb = influxDb;
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        public async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _log.LogInformation("OPC UA Subscription (PubSub) service started.");
 
             _applicationConfiguration = await CreateApplicationConfigurationAsync();
 
-            while (!stoppingToken.IsCancellationRequested)
+            // ✅ YAHI DAALNA HAI — cache ek baar padho, har device ke liye retry task chalao
+            var deviceConfigs = _cache.Get<List<DeviceConfigurationDto>>("OpcUaSubDevices");
+
+            if (deviceConfigs == null || !deviceConfigs.Any())
             {
+                _log.LogWarning("No OPC UA PubSub devices found in cache.");
+                return;
+            }
+
+            foreach (var config in deviceConfigs)
+            {
+                if (config.Protocol != 2) continue;
+                if (!string.Equals(config.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var capturedConfig = config;
+                var task = Task.Run(() => RunWithRetryAsync(capturedConfig, stoppingToken), stoppingToken);
+                _deviceTasks.TryAdd(config.Id, task);
+            }
+
+            await Task.WhenAll(_deviceTasks.Values);
+        
+        }
+
+        // retry logic
+        private async Task RunWithRetryAsync(DeviceConfigurationDto deviceConfig, CancellationToken ct)
+        {
+            int attempt = 0;
+            const int maxRetries = 5;
+            const int retryDelaySeconds = 10;
+
+            while (!ct.IsCancellationRequested)
+            {
+                attempt++;
+                _log.LogInformation("Device {Device} — attempt {Attempt}/{Max}",
+                    deviceConfig.DeviceName, attempt, maxRetries);
                 try
                 {
-                    var deviceConfigs =
-                        _cache.Get<List<DeviceConfigurationDto>>("OpcUaSubDevices");
+                    await SubscribeToDeviceAsync(deviceConfig, ct);
 
-                    if (deviceConfigs == null || !deviceConfigs.Any())
-                    {
-                        await Task.Delay(5000, stoppingToken);
-                        continue;
-                    }
+                    if (ct.IsCancellationRequested) break;
 
-                    foreach (var config in deviceConfigs)
-                    {
-                        if (config.Protocol != 2) continue;
-
-                        if (!string.Equals(config.OpcUaMode, "PubSub",
-                                StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        if (_deviceTasks.ContainsKey(config.Id)) continue;
-
-                        var task = Task.Run(
-                            () => SubscribeToDeviceAsync(config, stoppingToken),
-                            stoppingToken);
-
-                        _deviceTasks.TryAdd(config.Id, task);
-                    }
-
-                    CleanupCompletedDevices();
+                    _log.LogWarning("Device {Device} session ended. Retrying in {Delay}s...",
+                        deviceConfig.DeviceName, retryDelaySeconds);
+                    attempt = 0;
                 }
+                catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    _log.LogError(ex, "OPC UA Subscription manager error.");
+                    _log.LogError(ex, "Device {Device} failed on attempt {Attempt}.",
+                        deviceConfig.DeviceName, attempt);
                 }
 
-                await Task.Delay(5000, stoppingToken);
+                if (attempt >= maxRetries)
+                {
+                    _log.LogError("Device {Device} exhausted {Max} retries. Giving up.",
+                        deviceConfig.DeviceName, maxRetries);
+                    break;
+                }
+
+                try { await Task.Delay(TimeSpan.FromSeconds(retryDelaySeconds), ct); }
+                catch (OperationCanceledException) { break; }
+
+                
             }
+
+            CleanupCompletedDevices(); // cleanup when done
         }
 
         // CERTIFICATE HANDLING
@@ -169,17 +195,14 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             CancellationToken ct)
         {
             var session = await ConnectToServerAsync(deviceConfig, ct);
-            if (session == null) return;
+            if (session == null)
+                throw new Exception($"Failed to connect to {deviceConfig.ConnectionString}"); // ← exception throw karo
 
             _sessions[deviceConfig.Id] = session;
 
             var subscription = CreateSubscription(deviceConfig, session);
             if (subscription == null)
-            {
-                _log.LogError("Failed to create subscription for device {Device}",
-                    deviceConfig.DeviceName);
-                return;
-            }
+                throw new Exception($"Failed to create subscription for {deviceConfig.DeviceName}"); // ← exception throw karo
 
             _subscriptions[deviceConfig.Id] = subscription;
 
@@ -290,7 +313,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 double finalValue;
                 try
                 {
-                    finalValue = Convert.ToDouble(value.Value);
+                    finalValue = Convert.ToDouble(value.Value);  // always double to store in influxdb
                 }
                 catch
                 {
@@ -299,15 +322,26 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         node.NodeId, deviceConfig.DeviceName);
                     continue;
                 }
-
+                var displayValue = FormatForDisplay(finalValue, node.DataType);
                 var payload = new TelemetryPayload(
                     node.SignalId!.Value.ToString(),
                     finalValue,
                     now);
 
                 // Fire-and-forget write — keeps notification handler non-async
-                _ = WriteToInfluxAsync(deviceConfig, payload, now, ip, port, value);
+                _ = WriteToInfluxAsync(deviceConfig, payload, now, ip, port, value,displayValue);
             }
+        }
+        // display in given format in console (for demo purposes) — InfluxDB always stores as double, but we can format it for display based on the original data type
+        private static string FormatForDisplay(double value, string? dataType)
+        {
+            var type = (dataType ?? "float").Trim().ToLowerInvariant();
+
+            return type switch
+            {
+                "int" or "integer" or "int32" => ((int)value).ToString(),
+                _ => ((float)value).ToString("G6")  // float32 precision
+            };
         }
 
         private async Task WriteToInfluxAsync(
@@ -316,7 +350,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             DateTime now,
             string ip,
             int port,
-            DataValue value)
+            DataValue value,
+            string displayValue)
         {
             try
             {
@@ -337,7 +372,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     Console.WriteLine(new string('-', 65));
                     Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
                     Console.WriteLine(new string('-', 65));
-                    Console.WriteLine($"  {payload.SignalId,-38} {payload.Value,10:G6}");
+                    Console.WriteLine($"  {payload.SignalId,-38} {displayValue,10:G6}");
                     Console.WriteLine($"  Source TS : {value.SourceTimestamp:O}");
                     Console.WriteLine($"  Status    : {value.StatusCode}");
                     Console.WriteLine(new string('=', 65));

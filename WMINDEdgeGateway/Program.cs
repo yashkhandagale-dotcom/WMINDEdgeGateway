@@ -147,7 +147,7 @@ try
 
         var opcuaSubLogger = loggerFactory.CreateLogger<OpcUaSubscriptionService>();
         var opcuaSub       = new OpcUaSubscriptionService(opcuaSubLogger, cache, influxDbService);
-        _ = Task.Run(() => opcuaSub.StartAsync(cts.Token));
+        _ = Task.Run(() => opcuaSub.ExecuteAsync(cts.Token));
         Console.WriteLine("OPC-UA subscription service started -> writing to InfluxDB.");
     }
 
