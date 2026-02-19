@@ -79,7 +79,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             var factory = new ConnectionFactory()
             {
                 HostName = hostname,
-                Port = 65389,
+                Port = 5672,
                 UserName = "guest",
                 Password = "guest",
                 VirtualHost = "/",
