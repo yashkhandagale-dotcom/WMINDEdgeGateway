@@ -7,6 +7,14 @@
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+	  <WarningLevel>9999</WarningLevel>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+	  <WarningLevel>9999</WarningLevel>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<ProjectReference Include="..\WMINDEdgeGateway.Application\WMINDEdgeGateway.Application.csproj" />
 		<ProjectReference Include="..\WMINDEdgeGateway.Domain\WMINDEdgeGateway.Domain.csproj" />
@@ -21,6 +29,8 @@
 
 	<ItemGroup>
 	  <PackageReference Include="InfluxDB.Client" Version="5.0.0" />
+	  <PackageReference Include="RabbitMQ" Version="3.6.2" />
+	  <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
 	</ItemGroup>
 
 </Project>
