@@ -15,6 +15,9 @@ namespace WMINDEdgeGateway.Application.DTOs
         public string? Error { get; set; }
     }
 
+    // ===========================
+    // Modbus Register DTO
+    // ===========================
     public class DeviceRegisterDto
     {
         [JsonPropertyName("registerId")]
@@ -48,6 +51,9 @@ namespace WMINDEdgeGateway.Application.DTOs
         public bool IsHealthy { get; set; }
     }
 
+    // ===========================
+    // Modbus Slave DTO
+    // ===========================
     public class DeviceSlaveDto
     {
         [JsonPropertyName("deviceSlaveId")]
@@ -63,27 +69,39 @@ namespace WMINDEdgeGateway.Application.DTOs
         public DeviceRegisterDto[] Registers { get; set; } = Array.Empty<DeviceRegisterDto>();
     }
 
+    // ===========================
+    // OPC UA Node DTO (FIXED)
+    // ===========================
     public class OpcUaNodeDto
-    {   
+    {
+        [JsonPropertyName("opcUaNodeId")]
+        public Guid OpcUaNodeId { get; set; }
+
         [JsonPropertyName("nodeId")]
-        public string NodeId { get; set; }
+        public string NodeId { get; set; } = string.Empty;
 
         [JsonPropertyName("signalId")]
         public Guid? SignalId { get; set; }
 
-        [JsonPropertyName("displayName")]
-        public string DisplayName { get; set; }
+        [JsonPropertyName("signalName")]
+        public string SignalName { get; set; } = string.Empty;
 
         [JsonPropertyName("dataType")]
-        public string DataType { get; set; }
+        public string DataType { get; set; } = string.Empty;
 
         [JsonPropertyName("unit")]
-        public string Unit { get; set; }
+        public string? Unit { get; set; }
 
-        [JsonPropertyName("isHealthy")]
-        public bool IsHealthy { get; set; }
+        [JsonPropertyName("scalingFactor")]
+        public double ScalingFactor { get; set; }
+
+        [JsonPropertyName("signalTypeId")]
+        public Guid? SignalTypeId { get; set; }
     }
 
+    // ===========================
+    // Device Configuration DTO
+    // ===========================
     public class DeviceConfigurationDto
     {
         [JsonPropertyName("deviceId")]
@@ -94,6 +112,9 @@ namespace WMINDEdgeGateway.Application.DTOs
 
         [JsonPropertyName("protocol")]
         public int Protocol { get; set; }
+
+        [JsonPropertyName("opcUaMode")]
+        public string? OpcUaMode { get; set; }
 
         [JsonPropertyName("pollIntervalMs")]
         public int? PollIntervalMs { get; set; }
@@ -121,10 +142,5 @@ namespace WMINDEdgeGateway.Application.DTOs
 
         [JsonPropertyName("opcUaNodes")]
         public OpcUaNodeDto[] OpcUaNodes { get; set; } = Array.Empty<OpcUaNodeDto>();
-
-        [JsonPropertyName("opcUaMode")]
-        public string? OpcUaMode { get; set; }
-
-
     }
 }

@@ -27,10 +27,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             _log = log;
 
             // Read InfluxDB configuration
-            var url = config["InfluxDb:Url"] ?? "http://localhost:8086";
-            var token = config["InfluxDb:Token"];
-            _bucket = config["InfluxDb:Bucket"] ?? "telemetry";
-            _org = config["InfluxDb:Org"] ?? "wmind";
+            var url = config["InfluxDB:Url"] ?? "http://localhost:8087";
+            var token = config["InfluxDB:Token"];
+            _bucket = config["InfluxDB:Bucket"] ?? "SignalGateway";
+            _org = config["InfluxDB:Org"] ?? "Wonderbiz";
 
             if (string.IsNullOrEmpty(token))
             {
