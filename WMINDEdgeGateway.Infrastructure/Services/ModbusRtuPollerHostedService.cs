@@ -93,8 +93,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 DataBits = _config.GetValue<int>("ModbusRtu:DataBits", 8),   // appsettings se, default 8
                 Parity = ParseParity(first.Parity),
                 StopBits = ParseStopBits(_config.GetValue<string>("ModbusRtu:StopBits", "1")), // default "1"
-                ReadTimeout = 2000,
-                WriteTimeout = 1000
+                ReadTimeout = 3000,
+                WriteTimeout = 3000
             };
 
             try
