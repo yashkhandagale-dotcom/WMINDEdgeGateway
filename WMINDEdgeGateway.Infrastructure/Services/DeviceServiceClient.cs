@@ -14,6 +14,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly HttpClient _http;
         private readonly TokenService _tokenService;
 
+        // MOCK URL
+        private const string MOCK_OPC_URL =
+            "https://699d723483e60a406a4651d6.mockapi.io/devices";
+
         public DeviceServiceClient(HttpClient http, TokenService tokenService)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
@@ -25,45 +29,66 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             if (string.IsNullOrWhiteSpace(gatewayId))
                 throw new ArgumentException("Gateway ID cannot be empty", nameof(gatewayId));
 
-            // 🔐 Get JWT Token
+            //GET TOKEN
             var token = await _tokenService.GetTokenAsync();
 
             if (string.IsNullOrWhiteSpace(token))
                 throw new InvalidOperationException("TokenService returned an empty token.");
 
+            // GET BACKEND CONFIGS (MODBUS)
+            DeviceConfigurationDto[] backendConfigs = Array.Empty<DeviceConfigurationDto>();
+
+            //try
+            //{
+            //    var request = new HttpRequestMessage(
+            //        HttpMethod.Get,
+            //        $"api/devices/devices/configurations/gateway/{gatewayId}"
+            //    );
+
+            //    request.Headers.Authorization =
+            //        new AuthenticationHeaderValue("Bearer", token);
+
+            //    var response = await _http.SendAsync(request);
+            //    response.EnsureSuccessStatusCode();
+
+            //    var apiResponse =
+            //        await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
+
+            //    if (apiResponse != null && apiResponse.Success && apiResponse.Data != null)
+            //        backendConfigs = apiResponse.Data;
+            //}
+            //catch (Exception ex)
+            //{
+            //    Console.WriteLine($"Backend config fetch failed: {ex.Message}");
+            //}
+
+            // GET MOCK OPC CONFIGS
+            DeviceConfigurationDto[] mockConfigs = Array.Empty<DeviceConfigurationDto>();
+
             try
             {
-                // 📡 Create request
-                var request = new HttpRequestMessage(
-                    HttpMethod.Get,
-                    $"api/devices/devices/configurations/gateway/{gatewayId}"
-                );
+                using var mockHttp = new HttpClient();
 
-                request.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
+                var result =
+                    await mockHttp.GetFromJsonAsync<DeviceConfigurationDto[]>(MOCK_OPC_URL);
 
-                // 🚀 Send request
-                var response = await _http.SendAsync(request);
-
-                response.EnsureSuccessStatusCode();
-
-                // 📦 Deserialize
-                var apiResponse =
-                    await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
-
-                if (apiResponse == null)
-                    throw new Exception("Empty response from device service.");
-
-                if (!apiResponse.Success)
-                    throw new Exception($"Device service error: {apiResponse.Error}");
-
-                return apiResponse.Data ?? Array.Empty<DeviceConfigurationDto>();
+                if (result != null)
+                    mockConfigs = result;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Device configuration fetch failed: {ex.Message}");
-                return Array.Empty<DeviceConfigurationDto>();
+                Console.WriteLine($"Mock OPC fetch failed: {ex.Message}");
             }
+
+            // MERGE BOTH
+            var merged = backendConfigs
+                .Concat(mockConfigs)
+                .ToArray();
+
+            Console.WriteLine(
+                $"Loaded configs → Backend:{backendConfigs.Length} + MockOPC:{mockConfigs.Length} = Total:{merged.Length}");
+
+            return merged;
         }
     }
 }
