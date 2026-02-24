@@ -134,8 +134,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            Console.WriteLine("🚀 BRIDGE SERVICE STARTED - Polling InfluxDB...\n");
-            _log.LogInformation("🚀 InfluxDB to RabbitMQ bridge started. Poll interval: {Interval}s", _pollIntervalSeconds);
+            //Console.WriteLine("🚀 BRIDGE SERVICE STARTED - Polling InfluxDB...\n");
+            //_log.LogInformation("🚀 InfluxDB to RabbitMQ bridge started. Poll interval: {Interval}s", _pollIntervalSeconds);
 
             int iterationCount = 0;
 
@@ -146,9 +146,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     iterationCount++;
                     var currentTime = DateTime.UtcNow;
 
-                    Console.WriteLine($"\n╔══════════════════════════════════════════════════════════");
-                    Console.WriteLine($"║ ITERATION #{iterationCount} - {currentTime:yyyy-MM-dd HH:mm:ss} UTC");
-                    Console.WriteLine($"╚══════════════════════════════════════════════════════════");
+                    //Console.WriteLine($"\n╔══════════════════════════════════════════════════════════");
+                    //Console.WriteLine($"║ ITERATION #{iterationCount} - {currentTime:yyyy-MM-dd HH:mm:ss} UTC");
+                    //Console.WriteLine($"╚══════════════════════════════════════════════════════════");
 
                     // Format timestamp correctly for Flux (Z must be outside format string)
                     var startTimeFormatted = _lastProcessedTime.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
@@ -161,36 +161,36 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                           |> filter(fn: (r) => exists r.signal_id)
                     ";
 
-                    Console.WriteLine($"🔍 Querying InfluxDB:");
-                    Console.WriteLine($"   Bucket: {_bucket}");
-                    Console.WriteLine($"   Org: {_org}");
-                    Console.WriteLine($"   Time Range: {_lastProcessedTime:yyyy-MM-dd HH:mm:ss} UTC to NOW");
-                    Console.WriteLine($"\n📝 Query:");
-                    Console.WriteLine(query);
+                    //Console.WriteLine($"🔍 Querying InfluxDB:");
+                    //Console.WriteLine($"   Bucket: {_bucket}");
+                    //Console.WriteLine($"   Org: {_org}");
+                    //Console.WriteLine($"   Time Range: {_lastProcessedTime:yyyy-MM-dd HH:mm:ss} UTC to NOW");
+                    //Console.WriteLine($"\n📝 Query:");
+                    //Console.WriteLine(query);
 
-                    _log.LogDebug("🔍 Querying InfluxDB from {Start}", startTimeFormatted);
+                    //_log.LogDebug("🔍 Querying InfluxDB from {Start}", startTimeFormatted);
 
                     var queryApi = _influxClient.GetQueryApi();
                     var tables = await queryApi.QueryAsync(query, _org, stoppingToken);
 
                     var totalRecords = tables.Sum(t => t.Records.Count);
 
-                    Console.WriteLine($"\n📊 Query Results:");
-                    Console.WriteLine($"   Tables returned: {tables.Count}");
-                    Console.WriteLine($"   Total records: {totalRecords}");
+                    //Console.WriteLine($"\n📊 Query Results:");
+                    //Console.WriteLine($"   Tables returned: {tables.Count}");
+                    //Console.WriteLine($"   Total records: {totalRecords}");
 
-                    _log.LogDebug("📊 Query returned {TableCount} tables with {RecordCount} total records",
+                    //_log.LogDebug("📊 Query returned {TableCount} tables with {RecordCount} total records",
                         tables.Count, totalRecords);
 
-                    if (totalRecords == 0)
-                    {
-                        Console.WriteLine($"   ⚠️  NO DATA FOUND in InfluxDB for this time range!");
-                        Console.WriteLine($"   💡 Check if:");
-                        Console.WriteLine($"      - Data exists in bucket '{_bucket}'");
-                        Console.WriteLine($"      - Measurement is 'modbus_telemetry'");
-                        Console.WriteLine($"      - Records have 'signal_id' tag");
-                        Console.WriteLine($"      - Data was written after {_lastProcessedTime:yyyy-MM-dd HH:mm:ss} UTC");
-                    }
+                    //if (totalRecords == 0)
+                    //{
+                    //    Console.WriteLine($"   ⚠️  NO DATA FOUND in InfluxDB for this time range!");
+                    //    Console.WriteLine($"   💡 Check if:");
+                    //    Console.WriteLine($"      - Data exists in bucket '{_bucket}'");
+                    //    Console.WriteLine($"      - Measurement is 'modbus_telemetry'");
+                    //    Console.WriteLine($"      - Records have 'signal_id' tag");
+                    //    Console.WriteLine($"      - Data was written after {_lastProcessedTime:yyyy-MM-dd HH:mm:ss} UTC");
+                    //}
 
                     int publishedCount = 0;
 
@@ -261,21 +261,20 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         }
                     }
 
-                    Console.WriteLine($"\n📊 ITERATION SUMMARY:");
-                    if (publishedCount > 0)
-                    {
-                        Console.WriteLine($"   ✅ Successfully published {publishedCount} messages to queue '{_queueName}'");
-                        _log.LogInformation("✅ Bridged {Count} telemetry points from InfluxDB → RabbitMQ", publishedCount);
-                    }
-                    else
-                    {
-                        Console.WriteLine($"   💤 No messages published (no new data found)");
-                        _log.LogDebug("💤 No new data to bridge (last poll: {Time})", _lastProcessedTime);
-                    }
+                    //Console.WriteLine($"\n📊 ITERATION SUMMARY:");
+                    //if (publishedCount > 0)
+                    //{
+                    //    Console.WriteLine($"   ✅ Successfully published {publishedCount} messages to queue '{_queueName}'");
+                    //    _log.LogInformation("✅ Bridged {Count} telemetry points from InfluxDB → RabbitMQ", publishedCount);
+                    //}
+                    //else
+                    //{
+                    //    Console.WriteLine($"   💤 No messages published (no new data found)");
+                    //    _log.LogDebug("💤 No new data to bridge (last poll: {Time})", _lastProcessedTime);
+                    //}
 
                     // Update last processed time for next iteration
                     _lastProcessedTime = currentTime;
-                    Console.WriteLine($"   ⏰ Next query will start from: {_lastProcessedTime:yyyy-MM-dd HH:mm:ss} UTC");
 
                     // Wait before next poll
                     Console.WriteLine($"\n⏳ Waiting {_pollIntervalSeconds} seconds until next poll...");
