@@ -112,6 +112,8 @@ namespace WMINDEdgeGateway.Application.DTOs
 
         [JsonPropertyName("protocol")]
         public int Protocol { get; set; }
+        [JsonPropertyName("modbusMode")]
+        public string? ModbusMode { get; set; }
 
         [JsonPropertyName("opcUaMode")]
         public string? OpcUaMode { get; set; }
@@ -136,6 +138,13 @@ namespace WMINDEdgeGateway.Application.DTOs
 
         [JsonPropertyName("endian")]
         public string? Endian { get; set; }
+
+        [JsonPropertyName("serialPort")]
+        public string? SerialPort { get; set; } 
+        [JsonPropertyName("baudRate")]
+        public int? BaudRate { get; set; } 
+        [JsonPropertyName("parity")]
+        public string? Parity { get; set; }
 
         [JsonPropertyName("slaves")]
         public DeviceSlaveDto[] Slaves { get; set; } = Array.Empty<DeviceSlaveDto>();

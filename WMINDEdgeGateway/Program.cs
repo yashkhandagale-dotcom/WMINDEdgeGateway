@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 using InfluxDB.Client;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
-using WMINDEdgeGateway.Infrastructure.Caching;
+using WMINDEdgeGateway.Infrastructure.Caching;      
 using WMINDEdgeGateway.Infrastructure.Services;
 
 Console.WriteLine("Edge Gateway Starting... Fetching from InfluxDB and publishing to queue.");
@@ -96,7 +96,13 @@ try
 
     // ── Partition Devices by Protocol / Mode ──────────────────────────────────
     var modbusDevices = configList
-        .Where(c => c.Protocol == 1)
+        .Where(c => c.Protocol == 1 &&
+                    string.Equals(c.ModbusMode, "TCP", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    var modbusRtuDevices = configList
+        .Where(c => c.Protocol == 1 &&
+                    string.Equals(c.ModbusMode, "RTU", StringComparison.OrdinalIgnoreCase))
         .ToList();
 
     var opcuaPollingDevices = configList
@@ -109,13 +115,13 @@ try
                     string.Equals(c.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase))
         .ToList();
 
-    if (!modbusDevices.Any() && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any())
+    if (!modbusDevices.Any() && !modbusRtuDevices.Any()  && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any())
     {
         Console.WriteLine("No devices found to poll. Exiting.");
         return;
     }
 
-    // ── Modbus ────────────────────────────────────────────────────────────────
+    // ── Modbus -TCP ────────────────────────────────────────────────────────────────
     if (modbusDevices.Any())
     {
         Console.WriteLine($"Starting Modbus polling for {modbusDevices.Count} device(s)...");
@@ -125,6 +131,18 @@ try
         var modbusPoller = new ModbusPollerHostedService(modbusLogger, configuration, cache, influxDbService);
         _ = Task.Run(() => modbusPoller.StartAsync(cts.Token));
         Console.WriteLine("Modbus poller started -> writing to InfluxDB.");
+    }
+
+    // ── Modbus -RTU ───────────────────────────────────────────────────────────────
+    if (modbusRtuDevices.Any())
+    {
+        Console.WriteLine($"Starting Modbus RTU polling for {modbusRtuDevices.Count} device(s)...");
+        cache.Set("ModbusRtuDevices", modbusRtuDevices, TimeSpan.FromMinutes(30));
+
+        var rtuLogger = loggerFactory.CreateLogger<ModbusRtuPollerHostedService>();
+        var rtuPoller = new ModbusRtuPollerHostedService(rtuLogger, configuration, cache, influxDbService);
+        _ = Task.Run(() => rtuPoller.StartAsync(cts.Token));
+        Console.WriteLine("Modbus RTU poller started -> writing to InfluxDB.");
     }
 
     // ── OPC-UA Polling ────────────────────────────────────────────────────────
