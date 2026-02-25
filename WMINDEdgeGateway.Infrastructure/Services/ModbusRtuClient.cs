@@ -1,6 +1,4 @@
-﻿using Opc.Ua;
-using Org.BouncyCastle.Asn1.X509;
-using System.IO.Ports;
+﻿using System.IO.Ports;
 
 /// <summary>
 /// Yeh file ek low-level helper hai jo physically serial port pe jaake Modbus RTU device se baat karta hai. 
@@ -103,7 +101,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             // Timeout implement karne ke liye, ek linked cancellation token source banao jo caller ke token ke saath ek timeout token combine kare. Agar timeout hota hai,
             // toh OperationCanceledException throw hoga jise hum catch karke TimeoutException mein convert karenge.
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
 
             // Loop chalao jab tak required bytes nahi mil jati. Har read attempt mein, remaining bytes calculate karo aur buffer ke correct offset pe store karo.

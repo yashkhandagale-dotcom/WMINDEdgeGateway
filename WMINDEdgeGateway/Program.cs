@@ -94,6 +94,12 @@ try
     Console.WriteLine("Configurations cached in memory.");
     cache.PrintCache();
 
+    // Configs fetch ke baad, partition se PEHLE:
+    Console.WriteLine("\n--- Device Protocol Debug ---");
+    foreach (var c in configList)
+        Console.WriteLine($"  {c.DeviceName} | Protocol:{c.Protocol} | ModbusMode:{c.ModbusMode ?? "NULL"} | SerialPort:{c.SerialPort ?? "NULL"}");
+    Console.WriteLine("-----------------------------\n");
+
     // ── Partition Devices by Protocol / Mode ──────────────────────────────────
     var modbusDevices = configList
         .Where(c => c.Protocol == 1 &&
