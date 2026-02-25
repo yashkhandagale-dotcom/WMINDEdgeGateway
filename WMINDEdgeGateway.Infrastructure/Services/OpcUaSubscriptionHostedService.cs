@@ -371,7 +371,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     //Console.WriteLine($"Mode      : PubSub (subscription notification)");
                     //Console.WriteLine(new string('-', 65));
                     Console.WriteLine($"  {"OPCUA - Pubsub",-38} {"Value",10}");
-                    Console.WriteLine(new string('-', 65));
+                    //Console.WriteLine(new string('-', 65));
                     Console.WriteLine($"  {payload.SignalId,-38} {displayValue,10:G6}");
                     //Console.WriteLine($"  Source TS : {value.SourceTimestamp:O}");
                     //Console.WriteLine($"  Status    : {value.StatusCode}");

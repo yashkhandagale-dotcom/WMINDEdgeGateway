@@ -243,7 +243,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
     {
         lock (_consoleLock)
         {
-            //Console.WriteLine();
+            Console.WriteLine();
             //Console.WriteLine(new string('=', 70));
             //Console.WriteLine($"Device    : {device.DeviceName}");
             //Console.WriteLine($"Timestamp : {timestamp:yyyy-MM-dd HH:mm:ss} UTC");
