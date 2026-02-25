@@ -62,11 +62,11 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
         using var port = new SerialPort(portName)
         {
-            BaudRate = first.BaudRate ?? 9600,
-            DataBits = 8,
-            Parity = Parity.None,
-            StopBits = StopBits.One,
-            ReadTimeout = 3000,
+            BaudRate     = first.BaudRate ?? 9600,
+            DataBits     = 8,
+            Parity       = Parity.None,
+            StopBits     = StopBits.One,
+            ReadTimeout  = 3000,
             WriteTimeout = 3000
         };
 
@@ -83,9 +83,9 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
         var factory = new ModbusFactory();
         using var adapter = new SerialPortAdapter(port);
-        using var master = factory.CreateRtuMaster(adapter);
+        using var master  = factory.CreateRtuMaster(adapter);
 
-        master.Transport.Retries = 2;
+        master.Transport.Retries                 = 2;
         master.Transport.WaitToRetryMilliseconds = 200;
 
         while (!ct.IsCancellationRequested)
@@ -118,7 +118,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
             return;
 
         var payloads = new List<TelemetryPayload>();
-        var now = DateTime.UtcNow;
+        var now      = DateTime.UtcNow;
 
         foreach (var slave in device.Slaves)
         {
@@ -134,48 +134,60 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
             if (!regs.Any()) continue;
 
-            var groups = ModbusRegisterGrouping
-                .GroupContiguous(regs, r => r.RegisterAddress);
+            var groups = ModbusRegisterGrouping.GroupContiguous(regs, r => r.RegisterAddress);
 
             foreach (var chunk in groups)
             {
                 ushort start = (ushort)chunk[0].RegisterAddress;
-                ushort count = (ushort)chunk.Count;
 
-                if (start + count > 65536)
+                // FIX 1: count total words needed — Float32 needs 2 words per register
+                ushort count = (ushort)chunk.Sum(r => WordCount(r.DataType));
+
+                if (start + count > 65535)
                 {
                     _log.LogError("Invalid Modbus range {Start}-{End}", start, start + count - 1);
                     continue;
                 }
 
                 ushort[] values;
-
                 try
                 {
-                    values = master.ReadHoldingRegisters(
-                        (byte)slave.SlaveIndex,
-                        start,
-                        count);
+                    values = master.ReadHoldingRegisters((byte)slave.SlaveIndex, start, count);
                 }
                 catch (Exception ex)
                 {
-                    _log.LogError(ex,
-                        "Slave {Slave} rejected range {Start}-{End}",
-                        slave.SlaveIndex,
-                        start,
-                        start + count - 1);
+                    _log.LogError(ex, "Slave {Slave} rejected range {Start}-{End}",
+                        slave.SlaveIndex, start, start + count - 1);
                     continue;
                 }
 
-                for (int i = 0; i < chunk.Count; i++)
+                // FIX 2: walk through words with an offset, decode per DataType
+                int offset = 0;
+                foreach (var reg in chunk)
                 {
-                    var reg = chunk[i];
-                    double value = values[i] * reg.Scale;
+                    int wc = WordCount(reg.DataType);
+                    if (offset + wc > values.Length)
+                    {
+                        _log.LogWarning("Not enough registers at addr {Addr}", reg.RegisterAddress);
+                        break;
+                    }
+
+                    double value = DecodeRegister(reg.DataType, values, offset, reg.Scale);
+
+                    // Debug: shows raw hex + decoded value so you can verify
+                    _log.LogDebug(
+                        "  Addr={Addr}  Type={Type}  Raw=[{Raw}]  Value={Val}",
+                        reg.RegisterAddress,
+                        reg.DataType ?? "UInt16",
+                        string.Join(",", values.Skip(offset).Take(wc).Select(v => v.ToString("X4"))),
+                        value);
 
                     payloads.Add(new TelemetryPayload(
                         reg.SignalId!.Value.ToString(),
                         value,
                         now));
+
+                    offset += wc;
                 }
 
                 await Task.Delay(30, ct); // RTU silent gap
@@ -185,16 +197,43 @@ public class ModbusRtuPollerHostedService : BackgroundService
         if (!payloads.Any()) return;
 
         await _influxDb.WriteAsync(payloads, ct);
-
         PrintConsole(device, payloads, now);
+    }
+
+    // Returns how many 16-bit words a DataType occupies
+    private static int WordCount(string? dataType) =>
+        dataType?.ToUpperInvariant() is "FLOAT32" or "FLOAT32AB" or "FLOAT32BA" ? 2 : 1;
+
+    // Decodes raw register words to a double value.
+    //
+    // Set DataType in your register config to one of:
+    //   "UInt16"    – unsigned 16-bit × Scale  (default when blank)
+    //   "Int16"     – signed   16-bit × Scale
+    //   "Float32"   – IEEE-754 float, high word first  (most PLCs — try this first)
+    //   "Float32AB" – same as Float32
+    //   "Float32BA" – IEEE-754 float, low word first   (if Float32 gives wrong value, use this)
+    private static double DecodeRegister(string? dataType, ushort[] words, int offset, double scale)
+    {
+        return dataType?.ToUpperInvariant() switch
+        {
+            "INT16"                    => (short)words[offset] * scale,
+            "FLOAT32" or "FLOAT32AB"  => RegsToFloat(hi: words[offset],     lo: words[offset + 1]),
+            "FLOAT32BA"               => RegsToFloat(hi: words[offset + 1], lo: words[offset]),
+            _                          => words[offset] * scale,   // UInt16 default
+        };
+    }
+
+    private static float RegsToFloat(ushort hi, ushort lo)
+    {
+        uint raw = ((uint)hi << 16) | lo;
+        return BitConverter.ToSingle(BitConverter.GetBytes(raw), 0);
     }
 
     private static int ConvertPlcToZeroBased(int plcAddress)
     {
         if (plcAddress >= 40001 && plcAddress <= 49999)
             return plcAddress - 40001;
-
-        return plcAddress; // already zero based
+        return plcAddress;
     }
 
     private void PrintConsole(
