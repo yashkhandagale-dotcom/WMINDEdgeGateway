@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NModbus;
+using NModbus.IO;
 using NModbus.Serial;
 using System.IO.Ports;
 using WMINDEdgeGateway.Application.DTOs;
@@ -32,12 +33,12 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _log.LogInformation("NModbus RTU Poller started.");
+        _log.LogInformation("Modbus RTU Poller started.");
 
         var devices = _cache.Get<List<DeviceConfigurationDto>>("ModbusRtuDevices");
         if (devices == null || !devices.Any())
         {
-            _log.LogWarning("No RTU devices found.");
+            _log.LogWarning("No Modbus RTU devices configured.");
             return;
         }
 
@@ -76,12 +77,12 @@ public class ModbusRtuPollerHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "Cannot open {Port}", portName);
+            _log.LogError(ex, "Failed to open {Port}", portName);
             return;
         }
 
         var factory = new ModbusFactory();
-        var adapter = new SerialPortAdapter(port);
+        using var adapter = new SerialPortAdapter(port);
         using var master = factory.CreateRtuMaster(adapter);
 
         master.Transport.Retries = 3;
@@ -113,7 +114,8 @@ public class ModbusRtuPollerHostedService : BackgroundService
         IModbusSerialMaster master,
         CancellationToken ct)
     {
-        if (device.Slaves == null || !device.Slaves.Any()) return;
+        if (device.Slaves == null || !device.Slaves.Any())
+            return;
 
         var payloads = new List<TelemetryPayload>();
         var now = DateTime.UtcNow;
@@ -127,31 +129,32 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
             if (!regs.Any()) continue;
 
-            const int batch = 20;
+            const int batchSize = 20;
 
-            for (int i = 0; i < regs.Count; i += batch)
+            for (int i = 0; i < regs.Count; i += batchSize)
             {
-                var chunk = regs.Skip(i).Take(batch).ToList();
+                var chunk = regs.Skip(i).Take(batchSize).ToList();
 
-                ushort start = (ushort)(chunk[0].RegisterAddress);
+                ushort start = (ushort)chunk[0].RegisterAddress;
                 ushort count = (ushort)chunk.Count;
 
                 ushort[] values = master.ReadHoldingRegisters(
-                    (byte)slave.SlaveIndex, start, count);
+                    (byte)slave.SlaveIndex,
+                    start,
+                    count);
 
                 for (int k = 0; k < chunk.Count; k++)
                 {
                     var reg = chunk[k];
-
-                    double val = values[k] * reg.Scale;
+                    double value = values[k] * reg.Scale;
 
                     payloads.Add(new TelemetryPayload(
                         reg.SignalId!.Value.ToString(),
-                        val,
+                        value,
                         now));
                 }
 
-                await Task.Delay(30, ct); // frame spacing
+                await Task.Delay(30, ct); // Modbus frame spacing
             }
         }
 
@@ -159,25 +162,33 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
         await _influxDb.WriteAsync(payloads, ct);
 
+        PrintConsole(device, payloads, now);
+    }
+
+    private void PrintConsole(
+        DeviceConfigurationDto device,
+        List<TelemetryPayload> payloads,
+        DateTime timestamp)
+    {
         lock (_consoleLock)
         {
             Console.WriteLine();
-            Console.WriteLine(new string('=', 65));
+            Console.WriteLine(new string('=', 70));
             Console.WriteLine($"Device    : {device.DeviceName}");
-            Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
-            Console.WriteLine($"Protocol  : Modbus RTU (NModbus)");
+            Console.WriteLine($"Timestamp : {timestamp:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine($"Protocol  : Modbus RTU");
             Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
-            Console.WriteLine(new string('-', 65));
+            Console.WriteLine(new string('-', 70));
             Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
-            Console.WriteLine(new string('-', 65));
+            Console.WriteLine(new string('-', 70));
 
-            foreach (var p in payloads.Take(10))
+            foreach (var p in payloads.Take(12))
                 Console.WriteLine($"  {p.SignalId,-38} {p.Value,10:G6}");
 
-            if (payloads.Count > 10)
-                Console.WriteLine($"  ... and {payloads.Count - 10} more");
+            if (payloads.Count > 12)
+                Console.WriteLine($"  ... and {payloads.Count - 12} more");
 
-            Console.WriteLine(new string('=', 65));
+            Console.WriteLine(new string('=', 70));
         }
     }
 }
