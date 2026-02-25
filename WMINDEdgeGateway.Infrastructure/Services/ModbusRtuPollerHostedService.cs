@@ -85,7 +85,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
         using var adapter = new SerialPortAdapter(port);
         using var master = factory.CreateRtuMaster(adapter);
 
-        master.Transport.Retries = 3;
+        master.Transport.Retries = 2;
         master.Transport.WaitToRetryMilliseconds = 200;
 
         while (!ct.IsCancellationRequested)
@@ -124,29 +124,53 @@ public class ModbusRtuPollerHostedService : BackgroundService
         {
             var regs = slave.Registers
                 .Where(r => r.SignalId.HasValue && r.SignalId != Guid.Empty)
+                .Select(r =>
+                {
+                    r.RegisterAddress = ConvertPlcToZeroBased(r.RegisterAddress);
+                    return r;
+                })
                 .OrderBy(r => r.RegisterAddress)
                 .ToList();
 
             if (!regs.Any()) continue;
 
-            const int batchSize = 20;
+            var groups = ModbusRegisterGrouping
+                .GroupContiguous(regs, r => r.RegisterAddress);
 
-            for (int i = 0; i < regs.Count; i += batchSize)
+            foreach (var chunk in groups)
             {
-                var chunk = regs.Skip(i).Take(batchSize).ToList();
-
                 ushort start = (ushort)chunk[0].RegisterAddress;
                 ushort count = (ushort)chunk.Count;
 
-                ushort[] values = master.ReadHoldingRegisters(
-                    (byte)slave.SlaveIndex,
-                    start,
-                    count);
-
-                for (int k = 0; k < chunk.Count; k++)
+                if (start + count > 65536)
                 {
-                    var reg = chunk[k];
-                    double value = values[k] * reg.Scale;
+                    _log.LogError("Invalid Modbus range {Start}-{End}", start, start + count - 1);
+                    continue;
+                }
+
+                ushort[] values;
+
+                try
+                {
+                    values = master.ReadHoldingRegisters(
+                        (byte)slave.SlaveIndex,
+                        start,
+                        count);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex,
+                        "Slave {Slave} rejected range {Start}-{End}",
+                        slave.SlaveIndex,
+                        start,
+                        start + count - 1);
+                    continue;
+                }
+
+                for (int i = 0; i < chunk.Count; i++)
+                {
+                    var reg = chunk[i];
+                    double value = values[i] * reg.Scale;
 
                     payloads.Add(new TelemetryPayload(
                         reg.SignalId!.Value.ToString(),
@@ -154,7 +178,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                         now));
                 }
 
-                await Task.Delay(30, ct); // Modbus frame spacing
+                await Task.Delay(30, ct); // RTU silent gap
             }
         }
 
@@ -163,6 +187,14 @@ public class ModbusRtuPollerHostedService : BackgroundService
         await _influxDb.WriteAsync(payloads, ct);
 
         PrintConsole(device, payloads, now);
+    }
+
+    private static int ConvertPlcToZeroBased(int plcAddress)
+    {
+        if (plcAddress >= 40001 && plcAddress <= 49999)
+            return plcAddress - 40001;
+
+        return plcAddress; // already zero based
     }
 
     private void PrintConsole(
@@ -190,5 +222,34 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
             Console.WriteLine(new string('=', 70));
         }
+    }
+}
+
+public static class ModbusRegisterGrouping
+{
+    public static IEnumerable<List<T>> GroupContiguous<T>(
+        IEnumerable<T> source,
+        Func<T, int> addrSelector)
+    {
+        List<T> group = new();
+        int? last = null;
+
+        foreach (var item in source.OrderBy(addrSelector))
+        {
+            int addr = addrSelector(item);
+
+            if (last == null || addr == last + 1)
+                group.Add(item);
+            else
+            {
+                yield return group;
+                group = new List<T> { item };
+            }
+
+            last = addr;
+        }
+
+        if (group.Count > 0)
+            yield return group;
     }
 }
