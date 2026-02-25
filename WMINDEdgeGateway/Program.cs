@@ -13,7 +13,7 @@ using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;      
 using WMINDEdgeGateway.Infrastructure.Services;
 
-Console.WriteLine("Edge Gateway Starting... Fetching from InfluxDB and publishing to queue.");
+Console.WriteLine("Edge Gateway Starting... Fetching store data from InfluxDB and publishing to queue.");
 
 // ── Configuration ────────────────────────────────────────────────────────────
 var configuration = new ConfigurationBuilder()
@@ -94,12 +94,6 @@ try
     Console.WriteLine("Configurations cached in memory.");
     cache.PrintCache();
 
-    // Configs fetch ke baad, partition se PEHLE:
-    Console.WriteLine("\n--- Device Protocol Debug ---");
-    foreach (var c in configList)
-        Console.WriteLine($"  {c.DeviceName} | Protocol:{c.Protocol} | ModbusMode:{c.ModbusMode ?? "NULL"} | SerialPort:{c.SerialPort ?? "NULL"}");
-    Console.WriteLine("-----------------------------\n");
-
     // ── Partition Devices by Protocol / Mode ──────────────────────────────────
     var modbusDevices = configList
         .Where(c => c.Protocol == 1 &&
@@ -177,14 +171,14 @@ try
 
     // ── Bridge (InfluxDB → RabbitMQ) ──────────────────────────────────────────
     await bridgeService.StartAsync(cts.Token);
-    Console.WriteLine("Bridge service started -> reading InfluxDB and pushing to RabbitMQ.");
+    //Console.WriteLine("Bridge service started -> reading InfluxDB and pushing to RabbitMQ.");
 
-    Console.WriteLine("\n" + new string('=', 70));
-    Console.WriteLine("                    EDGE GATEWAY RUNNING                          ");
-    Console.WriteLine(new string('=', 70));
-    Console.WriteLine("  Data Flow: Modbus / OPC-UA -> InfluxDB -> RabbitMQ -> Cloud");
-    Console.WriteLine("  Press Ctrl+C to stop.");
-    Console.WriteLine(new string('=', 70) + "\n");
+    //Console.WriteLine("\n" + new string('=', 70));
+    //Console.WriteLine("                    EDGE GATEWAY RUNNING                          ");
+    //Console.WriteLine(new string('=', 70));
+    //Console.WriteLine("  Data Flow: Modbus / OPC-UA -> InfluxDB -> RabbitMQ -> Cloud");
+    //Console.WriteLine("  Press Ctrl+C to stop.");
+    //Console.WriteLine(new string('=', 70) + "\n");
 
     await Task.Delay(Timeout.Infinite, cts.Token);
 }
