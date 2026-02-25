@@ -74,7 +74,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 // Write batch to InfluxDB
                 await writeApi.WritePointsAsync(points, _bucket, _org, cancellationToken);
 
-                _log.LogDebug("Successfully wrote {Count} points to InfluxDB", points.Count);
+                //_log.LogDebug("Successfully wrote {Count} points to InfluxDB", points.Count);
             }
             catch (Exception ex)
             {

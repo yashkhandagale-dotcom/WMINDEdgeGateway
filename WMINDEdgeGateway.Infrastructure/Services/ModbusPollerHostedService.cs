@@ -345,28 +345,28 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     {
                         await _influxDb.WriteAsync(payloads, ct);
 
-                        _log.LogInformation("Pushed {Count} telemetry points to InfluxDB for device {Device}",
-                            payloads.Count, deviceConfig.DeviceName);
+                        //_log.LogInformation("Pushed {Count} telemetry points to InfluxDB for device {Device}",
+                        //    payloads.Count, deviceConfig.DeviceName);
 
                         // Optional: Print to console for debugging
                         lock (_consoleLock)
                         {
                             Console.WriteLine();
-                            Console.WriteLine(new string('=', 65));
-                            Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
-                            Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
-                            Console.WriteLine($"Payloads  : {payloads.Count} ? InfluxDB");
-                            Console.WriteLine(new string('-', 65));
-                            Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
-                            Console.WriteLine(new string('-', 65));
+                            //Console.WriteLine(new string('=', 65));
+                            //Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
+                            //Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
+                            //Console.WriteLine($"Payloads  : {payloads.Count} ? InfluxDB");
+                            //Console.WriteLine(new string('-', 65));
+                            Console.WriteLine($"  TCP {"Value",10}");
+                            //Console.WriteLine(new string('-', 65));
 
                             foreach (var p in payloads.Take(10)) // Show first 10
-                                Console.WriteLine($"  {p.SignalId,-38} {p.Value,10:G6}");
+                                Console.WriteLine($"  {p.Value,10:G6}");
 
-                            if (payloads.Count > 10)
-                                Console.WriteLine($"  ... and {payloads.Count - 10} more");
+                            //if (payloads.Count > 10)
+                            //    Console.WriteLine($"  ... and {payloads.Count - 10} more");
 
-                            Console.WriteLine(new string('=', 65));
+                            //Console.WriteLine(new string('=', 65));
                         }
                     }
                     catch (Exception influxEx)

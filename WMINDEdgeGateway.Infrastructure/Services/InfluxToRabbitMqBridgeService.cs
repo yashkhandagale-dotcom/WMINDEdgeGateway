@@ -244,14 +244,14 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                                 publishedCount++;
 
-                                Console.WriteLine($"      ✅ Published #{publishedCount}:");
-                                Console.WriteLine($"         SignalId: {signalIdStr}");
-                                Console.WriteLine($"         Value: {value}");
-                                Console.WriteLine($"         Timestamp: {timestamp:yyyy-MM-dd HH:mm:ss}");
-                                Console.WriteLine($"         JSON: {json}");
+                                //Console.WriteLine($"      ✅ Published #{publishedCount}:");
+                                //Console.WriteLine($"         SignalId: {signalIdStr}");
+                                //Console.WriteLine($"         Value: {value}");
+                                //Console.WriteLine($"         Timestamp: {timestamp:yyyy-MM-dd HH:mm:ss}");
+                                //Console.WriteLine($"         JSON: {json}");
 
-                                _log.LogTrace("📤 Published: SignalId={SignalId}, Value={Value}, Time={Time}",
-                                    signalIdStr, value, timestamp);
+                                //_log.LogTrace("📤 Published: SignalId={SignalId}, Value={Value}, Time={Time}",
+                                //    signalIdStr, value, timestamp);
                             }
                             catch (Exception ex)
                             {
@@ -277,7 +277,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     _lastProcessedTime = currentTime;
 
                     // Wait before next poll
-                    Console.WriteLine($"\n⏳ Waiting {_pollIntervalSeconds} seconds until next poll...");
+                    //Console.WriteLine($"\n⏳ Waiting {_pollIntervalSeconds} seconds until next poll...");
                     await Task.Delay(TimeSpan.FromSeconds(_pollIntervalSeconds), stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

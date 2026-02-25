@@ -175,12 +175,12 @@ public class ModbusRtuPollerHostedService : BackgroundService
                     double value = DecodeRegister(reg.DataType, values, offset, reg.Scale);
 
                     // Debug: shows raw hex + decoded value so you can verify
-                    _log.LogDebug(
-                        "  Addr={Addr}  Type={Type}  Raw=[{Raw}]  Value={Val}",
-                        reg.RegisterAddress,
-                        reg.DataType ?? "UInt16",
-                        string.Join(",", values.Skip(offset).Take(wc).Select(v => v.ToString("X4"))),
-                        value);
+                    //_log.LogDebug(
+                    //    "  Addr={Addr}  Type={Type}  Raw=[{Raw}]  Value={Val}",
+                    //    reg.RegisterAddress,
+                    //    reg.DataType ?? "UInt16",
+                    //    string.Join(",", values.Skip(offset).Take(wc).Select(v => v.ToString("X4"))),
+                    //    value);
 
                     payloads.Add(new TelemetryPayload(
                         reg.SignalId!.Value.ToString(),
@@ -243,23 +243,23 @@ public class ModbusRtuPollerHostedService : BackgroundService
     {
         lock (_consoleLock)
         {
-            Console.WriteLine();
-            Console.WriteLine(new string('=', 70));
-            Console.WriteLine($"Device    : {device.DeviceName}");
-            Console.WriteLine($"Timestamp : {timestamp:yyyy-MM-dd HH:mm:ss} UTC");
-            Console.WriteLine($"Protocol  : Modbus RTU");
-            Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
-            Console.WriteLine(new string('-', 70));
-            Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
-            Console.WriteLine(new string('-', 70));
+            //Console.WriteLine();
+            //Console.WriteLine(new string('=', 70));
+            //Console.WriteLine($"Device    : {device.DeviceName}");
+            //Console.WriteLine($"Timestamp : {timestamp:yyyy-MM-dd HH:mm:ss} UTC");
+            //Console.WriteLine($"Protocol  : Modbus RTU");
+            //Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
+            //Console.WriteLine(new string('-', 70));
+            Console.WriteLine($"  {"RTU",-38} {"Value",10}");
+            //Console.WriteLine(new string('-', 70));
 
             foreach (var p in payloads.Take(12))
                 Console.WriteLine($"  {p.SignalId,-38} {p.Value,10:G6}");
 
-            if (payloads.Count > 12)
-                Console.WriteLine($"  ... and {payloads.Count - 12} more");
+            //if (payloads.Count > 12)
+            //    Console.WriteLine($"  ... and {payloads.Count - 12} more");
 
-            Console.WriteLine(new string('=', 70));
+            //Console.WriteLine(new string('=', 70));
         }
     }
 }

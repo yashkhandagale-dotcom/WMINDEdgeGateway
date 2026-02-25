@@ -206,9 +206,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             _subscriptions[deviceConfig.Id] = subscription;
 
-            _log.LogInformation(
-                "Subscription active for device {Device}. Waiting for data changes...",
-                deviceConfig.DeviceName);
+            //_log.LogInformation(
+            //    "Subscription active for device {Device}. Waiting for data changes...",
+            //    deviceConfig.DeviceName);
 
             while (!ct.IsCancellationRequested && session.Connected)
             {
@@ -268,9 +268,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                         subscription.AddItem(monitoredItem);
 
-                        _log.LogInformation(
-                            "Added monitored item: {NodeId} for device {Device}",
-                            node.NodeId, deviceConfig.DeviceName);
+                        //_log.LogInformation(
+                        //    "Added monitored item: {NodeId} for device {Device}",
+                        //    node.NodeId, deviceConfig.DeviceName);
                     }
                     catch (Exception ex)
                     {
@@ -282,9 +282,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
                 subscription.ApplyChanges();
 
-                _log.LogInformation(
-                    "Subscription created with {Count} monitored items for device {Device}",
-                    subscription.MonitoredItemCount, deviceConfig.DeviceName);
+                //_log.LogInformation(
+                //    "Subscription created with {Count} monitored items for device {Device}",
+                //    subscription.MonitoredItemCount, deviceConfig.DeviceName);
 
                 return subscription;
             }
@@ -365,17 +365,17 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 lock (_consoleLock)
                 {
                     Console.WriteLine();
-                    Console.WriteLine(new string('=', 65));
-                    Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
-                    Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
-                    Console.WriteLine($"Mode      : PubSub (subscription notification)");
-                    Console.WriteLine(new string('-', 65));
-                    Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
+                    //Console.WriteLine(new string('=', 65));
+                    //Console.WriteLine($"Device    : {deviceConfig.DeviceName} | {ip}:{port}");
+                    //Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
+                    //Console.WriteLine($"Mode      : PubSub (subscription notification)");
+                    //Console.WriteLine(new string('-', 65));
+                    Console.WriteLine($"  {"OPCUA - Pubsub",-38} {"Value",10}");
                     Console.WriteLine(new string('-', 65));
                     Console.WriteLine($"  {payload.SignalId,-38} {displayValue,10:G6}");
-                    Console.WriteLine($"  Source TS : {value.SourceTimestamp:O}");
-                    Console.WriteLine($"  Status    : {value.StatusCode}");
-                    Console.WriteLine(new string('=', 65));
+                    //Console.WriteLine($"  Source TS : {value.SourceTimestamp:O}");
+                    //Console.WriteLine($"  Status    : {value.StatusCode}");
+                    //Console.WriteLine(new string('=', 65));
                 }
             }
             catch (Exception ex)
