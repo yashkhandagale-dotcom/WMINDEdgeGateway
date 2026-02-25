@@ -1,227 +1,183 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NModbus;
+using NModbus.Serial;
 using System.IO.Ports;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Infrastructure.Caching;
 
-namespace WMINDEdgeGateway.Infrastructure.Services
+namespace WMINDEdgeGateway.Infrastructure.Services;
+
+public class ModbusRtuPollerHostedService : BackgroundService
 {
-    public class ModbusRtuPollerHostedService : BackgroundService
+    private readonly ILogger<ModbusRtuPollerHostedService> _log;
+    private readonly IConfiguration _config;
+    private readonly MemoryCacheService _cache;
+    private readonly IInfluxDbService _influxDb;
+
+    private static readonly object _consoleLock = new();
+
+    public ModbusRtuPollerHostedService(
+        ILogger<ModbusRtuPollerHostedService> log,
+        IConfiguration config,
+        MemoryCacheService cache,
+        IInfluxDbService influxDb)
     {
-        private readonly ILogger<ModbusRtuPollerHostedService> _log;
-        private readonly IConfiguration _config;
-        private readonly MemoryCacheService _cache;
-        private readonly IInfluxDbService _influxDb;
+        _log = log;
+        _config = config;
+        _cache = cache;
+        _influxDb = influxDb;
+    }
 
-        private static readonly object _consoleLock = new();
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _log.LogInformation("NModbus RTU Poller started.");
 
-        public ModbusRtuPollerHostedService(
-            ILogger<ModbusRtuPollerHostedService> log,
-            IConfiguration config,
-            MemoryCacheService cache,
-            IInfluxDbService influxDb)
+        var devices = _cache.Get<List<DeviceConfigurationDto>>("ModbusRtuDevices");
+        if (devices == null || !devices.Any())
         {
-            _log = log;
-            _config = config;
-            _cache = cache;
-            _influxDb = influxDb;
+            _log.LogWarning("No RTU devices found.");
+            return;
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        var byPort = devices
+            .Where(d => !string.IsNullOrWhiteSpace(d.SerialPort))
+            .GroupBy(d => d.SerialPort!)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var tasks = byPort.Select(kv =>
+            Task.Run(() => PollPortAsync(kv.Key, kv.Value, stoppingToken), stoppingToken));
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task PollPortAsync(
+        string portName,
+        List<DeviceConfigurationDto> devices,
+        CancellationToken ct)
+    {
+        var first = devices.First();
+
+        using var port = new SerialPort(portName)
         {
-            _log.LogInformation("Modbus RTU Poller started.");
+            BaudRate = first.BaudRate ?? 9600,
+            DataBits = 8,
+            Parity = Parity.None,
+            StopBits = StopBits.One,
+            ReadTimeout = 3000,
+            WriteTimeout = 3000
+        };
 
-            var deviceConfigs = _cache.Get<List<DeviceConfigurationDto>>("ModbusRtuDevices");
-            if (deviceConfigs == null || !deviceConfigs.Any())
-            {
-                _log.LogWarning("No Modbus RTU devices found.");
-                return;
-            }
-
-            var byPort = deviceConfigs
-                .Where(d => !string.IsNullOrWhiteSpace(d.SerialPort))
-                .GroupBy(d => d.SerialPort!)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            var tasks = byPort.Select(kv =>
-                Task.Run(() => PollPortAsync(kv.Key, kv.Value, stoppingToken), stoppingToken));
-
-            await Task.WhenAll(tasks);
+        try
+        {
+            port.Open();
+            _log.LogInformation("Serial port {Port} opened at {Baud}", portName, port.BaudRate);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Cannot open {Port}", portName);
+            return;
         }
 
-        private async Task PollPortAsync(
-            string comPort,
-            List<DeviceConfigurationDto> devices,
-            CancellationToken ct)
+        var factory = new ModbusFactory();
+        var adapter = new SerialPortAdapter(port);
+        using var master = factory.CreateRtuMaster(adapter);
+
+        master.Transport.Retries = 3;
+        master.Transport.WaitToRetryMilliseconds = 200;
+
+        while (!ct.IsCancellationRequested)
         {
-            var first = devices.First();
-
-            using var port = new SerialPort(comPort)
-            {
-                BaudRate = first.BaudRate ?? 9600,
-                DataBits = _config.GetValue<int>("ModbusRtu:DataBits", 8),
-                Parity = ParseParity(first.Parity),
-                StopBits = ParseStopBits(_config.GetValue<string>("ModbusRtu:StopBits", "1")),
-                ReadTimeout = 3000,
-                WriteTimeout = 3000
-            };
-
-            try
-            {
-                port.Open();
-                _log.LogInformation("Serial port {Port} opened at {Baud} baud.", comPort, port.BaudRate);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Cannot open serial port {Port}", comPort);
-                return;
-            }
-
-            try
-            {
-                while (!ct.IsCancellationRequested)
-                {
-                    foreach (var device in devices)
-                    {
-                        try
-                        {
-                            await PollDeviceAsync(device, port, ct);
-                        }
-                        catch (Exception ex)
-                        {
-                            _log.LogError(ex, "RTU poll error for {Device}", device.DeviceName);
-                        }
-
-                        await Task.Delay(50, ct);   // RS-485 silent interval
-                    }
-
-                    int interval = devices.Min(d => d.PollIntervalMs ?? 1000);
-                    await Task.Delay(interval, ct);
-                }
-            }
-            finally
-            {
-                try { port.Close(); } catch { }
-            }
-        }
-
-        private async Task PollDeviceAsync(
-            DeviceConfigurationDto device,
-            SerialPort port,
-            CancellationToken ct)
-        {
-            if (device.Slaves == null || !device.Slaves.Any()) return;
-
-            var payloads = new List<TelemetryPayload>();
-            var now = DateTime.UtcNow;
-
-            bool dbUses40001 = device.Slaves.Any(s =>
-                s.Registers.Any(r => r.RegisterAddress >= 40001));
-
-            int ToProto(int addr) =>
-                dbUses40001 ? addr - 40001 :
-                (addr > 0 && addr < 40001) ? addr - 1 : addr;
-
-            foreach (var slave in device.Slaves)
-            {
-                var activeRegs = slave.Registers
-                    .Where(r => r.SignalId.HasValue && r.SignalId != Guid.Empty)
-                    .OrderBy(r => r.RegisterAddress)
-                    .ToList();
-
-                if (!activeRegs.Any()) continue;
-
-                const int maxRegsPerRead = 20;
-                int j = 0;
-
-                while (j < activeRegs.Count)
-                {
-                    int startProto = ToProto(activeRegs[j].RegisterAddress);
-                    int endProto = startProto;
-                    int batchEnd = j;
-
-                    while (batchEnd < activeRegs.Count - 1)
-                    {
-                        int nextProto = ToProto(activeRegs[batchEnd + 1].RegisterAddress);
-                        if (nextProto - startProto >= maxRegsPerRead) break;
-                        endProto = nextProto;
-                        batchEnd++;
-                    }
-
-                    ushort start = (ushort)startProto;
-                    ushort count = (ushort)(endProto - startProto + 1);
-
-                    ushort[] regs = await SafeReadAsync(
-                        port, (byte)slave.SlaveIndex, start, count, ct);
-
-                    if (regs == null)
-                    {
-                        j = batchEnd + 1;
-                        continue;
-                    }
-
-                    for (int k = j; k <= batchEnd; k++)
-                    {
-                        var reg = activeRegs[k];
-                        int idx = ToProto(reg.RegisterAddress) - startProto;
-                        if (idx < 0 || idx >= regs.Length) continue;
-
-                        double val = regs[idx] * reg.Scale;
-                        payloads.Add(new TelemetryPayload(
-                            reg.SignalId!.Value.ToString(), val, now));
-                    }
-
-                    j = batchEnd + 1;
-                    await Task.Delay(30, ct);  // frame gap
-                }
-            }
-
-            if (!payloads.Any()) return;
-
-            await _influxDb.WriteAsync(payloads, ct);
-
-            _log.LogInformation("RTU: {Count} points → InfluxDB ({Device})",
-                payloads.Count, device.DeviceName);
-        }
-
-        private async Task<ushort[]?> SafeReadAsync(
-            SerialPort port,
-            byte slave,
-            ushort start,
-            ushort count,
-            CancellationToken ct)
-        {
-            for (int i = 1; i <= 3; i++)
+            foreach (var device in devices)
             {
                 try
                 {
-                    return await ModbusRtuClient.ReadHoldingRegistersAsync(
-                        port, slave, start, count, ct);
+                    await PollDeviceAsync(device, master, ct);
                 }
-                catch (TimeoutException) when (i < 3)
+                catch (Exception ex)
                 {
-                    await Task.Delay(200, ct);
+                    _log.LogError(ex, "RTU poll error for {Device}", device.DeviceName);
                 }
+
+                await Task.Delay(50, ct); // RS485 silent gap
             }
 
-            _log.LogWarning("Timeout: slave {Slave}", slave);
-            return null;
+            int delay = devices.Min(d => d.PollIntervalMs ?? 1000);
+            await Task.Delay(delay, ct);
+        }
+    }
+
+    private async Task PollDeviceAsync(
+        DeviceConfigurationDto device,
+        IModbusSerialMaster master,
+        CancellationToken ct)
+    {
+        if (device.Slaves == null || !device.Slaves.Any()) return;
+
+        var payloads = new List<TelemetryPayload>();
+        var now = DateTime.UtcNow;
+
+        foreach (var slave in device.Slaves)
+        {
+            var regs = slave.Registers
+                .Where(r => r.SignalId.HasValue && r.SignalId != Guid.Empty)
+                .OrderBy(r => r.RegisterAddress)
+                .ToList();
+
+            if (!regs.Any()) continue;
+
+            const int batch = 20;
+
+            for (int i = 0; i < regs.Count; i += batch)
+            {
+                var chunk = regs.Skip(i).Take(batch).ToList();
+
+                ushort start = (ushort)(chunk[0].RegisterAddress);
+                ushort count = (ushort)chunk.Count;
+
+                ushort[] values = master.ReadHoldingRegisters(
+                    (byte)slave.SlaveIndex, start, count);
+
+                for (int k = 0; k < chunk.Count; k++)
+                {
+                    var reg = chunk[k];
+
+                    double val = values[k] * reg.Scale;
+
+                    payloads.Add(new TelemetryPayload(
+                        reg.SignalId!.Value.ToString(),
+                        val,
+                        now));
+                }
+
+                await Task.Delay(30, ct); // frame spacing
+            }
         }
 
-        private static Parity ParseParity(string? p) => p?.ToUpperInvariant() switch
-        {
-            "EVEN" => Parity.Even,
-            "ODD" => Parity.Odd,
-            "MARK" => Parity.Mark,
-            _ => Parity.None
-        };
+        if (!payloads.Any()) return;
 
-        private static StopBits ParseStopBits(string? s) => s switch
+        await _influxDb.WriteAsync(payloads, ct);
+
+        lock (_consoleLock)
         {
-            "2" => StopBits.Two,
-            "1.5" => StopBits.OnePointFive,
-            _ => StopBits.One
-        };
+            Console.WriteLine();
+            Console.WriteLine(new string('=', 65));
+            Console.WriteLine($"Device    : {device.DeviceName}");
+            Console.WriteLine($"Timestamp : {now:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine($"Protocol  : Modbus RTU (NModbus)");
+            Console.WriteLine($"Payloads  : {payloads.Count} → InfluxDB");
+            Console.WriteLine(new string('-', 65));
+            Console.WriteLine($"  {"SignalId",-38} {"Value",10}");
+            Console.WriteLine(new string('-', 65));
+
+            foreach (var p in payloads.Take(10))
+                Console.WriteLine($"  {p.SignalId,-38} {p.Value,10:G6}");
+
+            if (payloads.Count > 10)
+                Console.WriteLine($"  ... and {payloads.Count - 10} more");
+
+            Console.WriteLine(new string('=', 65));
+        }
     }
 }

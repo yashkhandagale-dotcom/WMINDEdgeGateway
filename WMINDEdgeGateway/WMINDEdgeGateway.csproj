@@ -31,6 +31,8 @@
 	  <PackageReference Include="InfluxDB.Client" Version="5.0.0" />
 	  <PackageReference Include="RabbitMQ" Version="3.6.2" />
 	  <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+	  <PackageReference Include="NModbus4" Version="3.0.81" />
+      <PackageReference Include="NModbus.Serial" Version="3.0.81" />
 	</ItemGroup>
 
 </Project>
