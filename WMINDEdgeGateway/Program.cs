@@ -96,7 +96,7 @@ try
 
     // ── Partition Devices by Protocol / Mode ──────────────────────────────────
     var modbusDevices = configList
-        .Where(c => c.Protocol == 1 &&
+        .Where(c => c.Protocol == 1 ||
                     string.Equals(c.ModbusMode, "TCP", StringComparison.OrdinalIgnoreCase))
         .ToList();
 
