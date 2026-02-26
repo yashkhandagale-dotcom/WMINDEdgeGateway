@@ -2,14 +2,16 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NModbus;
-using NModbus.IO;
 using NModbus.Serial;
+using Opc.Ua;
 using System.IO.Ports;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Infrastructure.Caching;
 
 namespace WMINDEdgeGateway.Infrastructure.Services;
 
+// this is the main Modbus RTU polling service. It reads device configs from cache,
+// polls each serial port for its devices, decodes register values, and writes telemetry to InfluxDB.
 public class ModbusRtuPollerHostedService : BackgroundService
 {
     private readonly ILogger<ModbusRtuPollerHostedService> _log;
@@ -19,6 +21,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
     private static readonly object _consoleLock = new();
 
+    // Constructor with dependency injection for logging, configuration, cache, and InfluxDB service
     public ModbusRtuPollerHostedService(
         ILogger<ModbusRtuPollerHostedService> log,
         IConfiguration config,
@@ -31,6 +34,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
         _influxDb = influxDb;
     }
 
+    // Main execution loop of the hosted service. It retrieves device configs from cache
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _log.LogInformation("Modbus RTU Poller started.");
@@ -42,32 +46,38 @@ public class ModbusRtuPollerHostedService : BackgroundService
             return;
         }
 
+        // Group devices by their SerialPort to poll each port in parallel
+
         var byPort = devices
             .Where(d => !string.IsNullOrWhiteSpace(d.SerialPort))
             .GroupBy(d => d.SerialPort!)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        // Start a polling task for each serial port
         var tasks = byPort.Select(kv =>
             Task.Run(() => PollPortAsync(kv.Key, kv.Value, stoppingToken), stoppingToken));
 
+        // Wait for all polling tasks to complete (which will be when the service is stopped)
         await Task.WhenAll(tasks);
     }
 
+    // Polls a single serial port for all its associated devices. It opens the port, creates a Modbus master,
     private async Task PollPortAsync(
         string portName,
         List<DeviceConfigurationDto> devices,
         CancellationToken ct)
     {
+        // For simplicity, we take the first device's baud rate as the port setting. In a real implementation,
         var first = devices.First();
 
         using var port = new SerialPort(portName)
         {
             BaudRate     = first.BaudRate ?? 9600,
-            DataBits     = 8,
+            DataBits     = 8, // most common setting for Modbus RTU
             Parity       = Parity.None,
             StopBits     = StopBits.One,
-            ReadTimeout  = 3000,
-            WriteTimeout = 3000
+            ReadTimeout  = 3000, // 3 seconds timeout for reads
+            WriteTimeout = 3000  // 3 seconds timeout for writes
         };
 
         try
@@ -81,6 +91,11 @@ public class ModbusRtuPollerHostedService : BackgroundService
             return;
         }
 
+        // Create Modbus master for RTU communication over the opened serial port
+        // NModbus ka entry point
+        // SerialPort ko NModbus - compatible banaata hai
+        // CreateRtuMaster → RTU protocol ka master object banata hai —
+        // yahi actual Modbus frames banayega aur parse karega
         var factory = new ModbusFactory();
         using var adapter = new SerialPortAdapter(port);
         using var master  = factory.CreateRtuMaster(adapter);
@@ -90,6 +105,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
         while (!ct.IsCancellationRequested)
         {
+            // Har device ko ek-ek karke poll karo.
             foreach (var device in devices)
             {
                 try
@@ -101,14 +117,16 @@ public class ModbusRtuPollerHostedService : BackgroundService
                     _log.LogError(ex, "RTU poll error for {Device}", device.DeviceName);
                 }
 
-                await Task.Delay(50, ct); // RS485 silent gap
+                await Task.Delay(50, ct); //Har device ke baad 50ms wait.
             }
-
+            // Port ke baad, jitna bhi devices hain unka minimum poll interval check karo, uske hisaab se wait karo.
             int delay = devices.Min(d => d.PollIntervalMs ?? 1000);
             await Task.Delay(delay, ct);
         }
     }
 
+    // Polls a single device by reading its configured registers, decoding values,
+    // and writing telemetry to InfluxDB.
     private async Task PollDeviceAsync(
         DeviceConfigurationDto device,
         IModbusSerialMaster master,
@@ -117,11 +135,14 @@ public class ModbusRtuPollerHostedService : BackgroundService
         if (device.Slaves == null || !device.Slaves.Any())
             return;
 
+        // Payloads list to collect decoded telemetry before writing to InfluxDB
         var payloads = new List<TelemetryPayload>();
-        var now      = DateTime.UtcNow;
+        var now      = DateTime.UtcNow; // Timestamp for all payloads from this poll
 
+        // Har slave ke registers ko read karo, decode karo, aur payloads list me add karo.
         foreach (var slave in device.Slaves)
         {
+            // Get registers that have a valid SignalId and convert their addresses to zero-based for Modbus and sort by address
             var regs = slave.Registers
                 .Where(r => r.SignalId.HasValue && r.SignalId != Guid.Empty)
                 .Select(r =>
@@ -134,25 +155,38 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
             if (!regs.Any()) continue;
 
+            // Group contiguous registers together to minimize Modbus requests. Registers are already sorted by address.
             var groups = ModbusRegisterGrouping.GroupContiguous(regs, r => r.RegisterAddress);
 
             foreach (var chunk in groups)
             {
+                // Phle register ka address lo 
                 ushort start = (ushort)chunk[0].RegisterAddress;
 
-                // FIX 1: count total words needed — Float32 needs 2 words per register
+                // kitne words padhne hain. Float32 ko 2 words chahiye (32 bits = 2×16 bits), baaki sab 1 word.
                 ushort count = (ushort)chunk.Sum(r => WordCount(r.DataType));
 
+                // check if the requested range exceeds Modbus limits (0-65535)
                 if (start + count > 65535)
                 {
                     _log.LogError("Invalid Modbus range {Start}-{End}", start, start + count - 1);
                     continue;
                 }
 
+                // Read the whole chunk of registers in one Modbus request
                 ushort[] values;
                 try
                 {
+                    // Read the entire range of registers for the chunk, not just one register
                     values = master.ReadHoldingRegisters((byte)slave.SlaveIndex, start, count);
+                    
+                    // yeh actual Modbus request hai! NModbus yahan:
+                    //  Frame banata hai:
+                    //  [SlaveID] [03][start_hi][start_lo][count_hi][count_lo][CRC_lo][CRC_hi]
+                    //  Serial port pe bhejta hai
+                    //  Response wait karta hai
+                    //  CRC verify karta hai
+                    //  Register values return karta hai
                 }
                 catch (Exception ex)
                 {
@@ -161,7 +195,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                     continue;
                 }
 
-                // FIX 2: walk through words with an offset, decode per DataType
+                // Walk through words with an offset, decode per DataType
                 int offset = 0;
                 foreach (var reg in chunk)
                 {
@@ -172,21 +206,16 @@ public class ModbusRtuPollerHostedService : BackgroundService
                         break;
                     }
 
+                    // Decode the raw register values to a double using the specified DataType and Scale
                     double value = DecodeRegister(reg.DataType, values, offset, reg.Scale);
 
-                    // Debug: shows raw hex + decoded value so you can verify
-                    //_log.LogDebug(
-                    //    "  Addr={Addr}  Type={Type}  Raw=[{Raw}]  Value={Val}",
-                    //    reg.RegisterAddress,
-                    //    reg.DataType ?? "UInt16",
-                    //    string.Join(",", values.Skip(offset).Take(wc).Select(v => v.ToString("X4"))),
-                    //    value);
-
+                    // Add a telemetry payload for this register if it has a valid SignalId
                     payloads.Add(new TelemetryPayload(
                         reg.SignalId!.Value.ToString(),
                         value,
                         now));
 
+                    // Move the offset by the number of words we just processed (1 for UInt16/Int16, 2 for Float32)
                     offset += wc;
                 }
 
@@ -194,6 +223,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
             }
         }
 
+        // check payloads list. Agar koi valid payloads hain to InfluxDB me likho, aur console pe print karo.
         if (!payloads.Any()) return;
 
         await _influxDb.WriteAsync(payloads, ct);
@@ -223,12 +253,15 @@ public class ModbusRtuPollerHostedService : BackgroundService
         };
     }
 
+    // Combines two 16-bit register values into a 32-bit float.
+    // The 'hi' and 'lo' parameters depend on the DataType (Float32 vs Float32BA).
     private static float RegsToFloat(ushort hi, ushort lo)
     {
         uint raw = ((uint)hi << 16) | lo;
         return BitConverter.ToSingle(BitConverter.GetBytes(raw), 0);
     }
 
+    // converts PLC-style 1-based register addresses (e.g. 40001) to zero-based addresses for Modbus (e.g. 0)
     private static int ConvertPlcToZeroBased(int plcAddress)
     {
         if (plcAddress >= 40001 && plcAddress <= 49999)
@@ -236,6 +269,8 @@ public class ModbusRtuPollerHostedService : BackgroundService
         return plcAddress;
     }
 
+    // Simple console output to visualize the latest telemetry values for each device.
+    // This is optional and can be removed in production.
     private void PrintConsole(
         DeviceConfigurationDto device,
         List<TelemetryPayload> payloads,
