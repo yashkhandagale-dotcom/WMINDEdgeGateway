@@ -113,10 +113,10 @@ namespace WMINDEdgeGateway.Application.DTOs
         [JsonPropertyName("protocol")]
         public int Protocol { get; set; }
         [JsonPropertyName("modbusMode")]
-        public string? ModbusMode { get; set; }
+        public string? ModbusMode { get; set; } = "TCP";
 
         [JsonPropertyName("opcUaMode")]
-        public string? OpcUaMode { get; set; } = "TCP";
+        public string? OpcUaMode { get; set; } 
 
         [JsonPropertyName("pollIntervalMs")]
         public int? PollIntervalMs { get; set; }
