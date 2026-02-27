@@ -5,6 +5,7 @@ using Opc.Ua.Client;
 using Opc.Ua.Configuration;
 using System.Collections.Concurrent;
 using WMINDEdgeGateway.Application.DTOs;
+using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
 
 namespace WMINDEdgeGateway.Infrastructure.Services

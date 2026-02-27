@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using WMINDEdgeGateway.Application.DTOs;
+using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
@@ -17,11 +18,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
     /// Unified telemetry payload structure - SignalId, Value, Timestamp
     /// This will be pushed to InfluxDB
     /// </summary>
-    public record TelemetryPayload(
-        string SignalId,
-        double Value,
-        DateTime Timestamp
-    );
 
     public class ModbusPollerHostedService : BackgroundService
     {

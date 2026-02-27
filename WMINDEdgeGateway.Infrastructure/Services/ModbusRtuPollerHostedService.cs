@@ -6,7 +6,9 @@ using NModbus.Serial;
 using Opc.Ua;
 using System.IO.Ports;
 using WMINDEdgeGateway.Application.DTOs;
+using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
+
 
 namespace WMINDEdgeGateway.Infrastructure.Services;
 

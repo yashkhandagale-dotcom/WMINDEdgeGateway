@@ -8,6 +8,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using WMINDEdgeGateway.Application.DTOs;
+using WMINDEdgeGateway.Application.Interfaces;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
