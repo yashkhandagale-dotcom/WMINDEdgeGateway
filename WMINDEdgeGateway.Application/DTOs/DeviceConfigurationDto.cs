@@ -142,9 +142,9 @@ namespace WMINDEdgeGateway.Application.DTOs
         [JsonPropertyName("serialPort")]
         public string? SerialPort { get; set; } 
         [JsonPropertyName("baudRate")]
-        public int? BaudRate { get; set; } 
-        //[JsonPropertyName("parity")]
-        //public string? Parity { get; set; }
+        public int? BaudRate { get; set; }
+        [JsonPropertyName("parity")]
+        public string? Parity { get; set; }
 
         [JsonPropertyName("slaves")]
         public DeviceSlaveDto[] Slaves { get; set; } = Array.Empty<DeviceSlaveDto>();

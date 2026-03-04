@@ -86,13 +86,20 @@ public class ModbusRtuPollerHostedService : BackgroundService
             _ => StopBits.One
         };
 
+        Parity parity = (first.Parity ?? "None").ToUpperInvariant() switch
+        {
+            "EVEN" => Parity.Even,
+            "ODD" => Parity.Odd,
+            _ => Parity.None   // default → "None"
+        };
+
 
         // SerialPort object to manage the serial connection. We set common Modbus RTU parameters here.
         using var port = new SerialPort(portName)
         {
             BaudRate = first.BaudRate ?? 9600,  // DTO se (device specific)
             DataBits = dataBits,                 // AppSettings se
-            Parity = Parity.None,              // Always None (Modbus spec)
+            Parity = parity,              // DTO se
             StopBits = stopBits,                 // AppSettings se
             ReadTimeout = responseTimeout,          // AppSettings se
             WriteTimeout = responseTimeout
