@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NModbus;
 using NModbus.Serial;
-using Opc.Ua;
 using System.IO.Ports;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
@@ -72,14 +71,31 @@ public class ModbusRtuPollerHostedService : BackgroundService
         // For simplicity, we take the first device's baud rate as the port setting. In a real implementation,
         var first = devices.First();
 
+        // AppSettings se directly read karo _config se
+        int dataBits = _config.GetValue<int>("ModbusRtu:DataBits", 8);
+        int responseTimeout = _config.GetValue<int>("ModbusRtu:ResponseTimeoutMs", 3000);
+        int interFrameGapMs = _config.GetValue<int>("ModbusRtu:InterFrameGapMs", 5);
+        int failureThreshold = _config.GetValue<int>("ModbusRtu:FailureThreshold", 3);
+        string stopBitsStr = _config.GetValue<string>("ModbusRtu:StopBits", "1") ?? "1";
+
+        // StopBits string ko enum mein convert karo
+        StopBits stopBits = stopBitsStr switch
+        {
+            "2" => StopBits.Two,
+            "1.5" => StopBits.OnePointFive,
+            _ => StopBits.One
+        };
+
+
+        // SerialPort object to manage the serial connection. We set common Modbus RTU parameters here.
         using var port = new SerialPort(portName)
         {
-            BaudRate     = first.BaudRate ?? 9600,
-            DataBits     = 8, // most common setting for Modbus RTU
-            Parity       = Parity.None,
-            StopBits     = StopBits.One,
-            ReadTimeout  = 3000, // 3 seconds timeout for reads
-            WriteTimeout = 3000  // 3 seconds timeout for writes
+            BaudRate = first.BaudRate ?? 9600,  // DTO se (device specific)
+            DataBits = dataBits,                 // AppSettings se
+            Parity = Parity.None,              // Always None (Modbus spec)
+            StopBits = stopBits,                 // AppSettings se
+            ReadTimeout = responseTimeout,          // AppSettings se
+            WriteTimeout = responseTimeout
         };
 
         try
@@ -98,12 +114,15 @@ public class ModbusRtuPollerHostedService : BackgroundService
         // SerialPort ko NModbus - compatible banaata hai
         // CreateRtuMaster → RTU protocol ka master object banata hai —
         // yahi actual Modbus frames banayega aur parse karega
-        var factory = new ModbusFactory();
-        using var adapter = new SerialPortAdapter(port);
-        using var master  = factory.CreateRtuMaster(adapter);
 
-        master.Transport.Retries                 = 2;
-        master.Transport.WaitToRetryMilliseconds = 200;
+        // Nmodbus ka factory class se master create karte hain. NModbus ke andar, master object hi Modbus requests bhejta hai.
+        var factory = new ModbusFactory();
+        using var adapter = new SerialPortAdapter(port); // SerialPort ko NModbus ke liye adapter me wrap karte hain
+        using var master  = factory.CreateRtuMaster(adapter); // RTU master banate hain jo serial adapter ke through communicate karega
+
+        //  Request bheja → No response → Wait 200ms
+        master.Transport.Retries                 = failureThreshold; // RTU communication me, agar ek request fail ho jati hai (e.g. timeout), to master automatically retry karta hai. Yahan hum 2 retries set kar rahe hain.
+        master.Transport.WaitToRetryMilliseconds = 200; // Agar retry karna pade, to pehle 200ms wait karega before retrying. RTU me thoda delay dena achha hota hai.
 
         while (!ct.IsCancellationRequested)
         {
@@ -119,7 +138,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                     _log.LogError(ex, "RTU poll error for {Device}", device.DeviceName);
                 }
 
-                await Task.Delay(50, ct); //Har device ke baad 50ms wait.
+                await Task.Delay(interFrameGapMs, ct); //Har device ke baad 50ms wait.
             }
             // Port ke baad, jitna bhi devices hain unka minimum poll interval check karo, uske hisaab se wait karo.
             int delay = devices.Min(d => d.PollIntervalMs ?? 1000);
@@ -160,12 +179,15 @@ public class ModbusRtuPollerHostedService : BackgroundService
             // Group contiguous registers together to minimize Modbus requests. Registers are already sorted by address.
             var groups = ModbusRegisterGrouping.GroupContiguous(regs, r => r.RegisterAddress);
 
+            // Each group represents a contiguous block of registers that can be read in one Modbus request.
             foreach (var chunk in groups)
             {
-                // Phle register ka address lo 
+                // Phle register ka address lo , chunk se mtlb group se 
                 ushort start = (ushort)chunk[0].RegisterAddress;
 
                 // kitne words padhne hain. Float32 ko 2 words chahiye (32 bits = 2×16 bits), baaki sab 1 word.
+                // count = chunk me jitne registers hain, unka total word count nikalte hain.
+                // Har register ke DataType ke hisaab se word count nikalte hain aur sum karte hain.
                 ushort count = (ushort)chunk.Sum(r => WordCount(r.DataType));
 
                 // check if the requested range exceeds Modbus limits (0-65535)
@@ -176,7 +198,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 }
 
                 // Read the whole chunk of registers in one Modbus request
-                ushort[] values;
+                ushort[] values; // array : Ek call mein MULTIPLE registers padhte hain
                 try
                 {
                     // Read the entire range of registers for the chunk, not just one register
@@ -248,7 +270,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
     {
         return dataType?.ToUpperInvariant() switch
         {
-            "INT16"                    => (short)words[offset] * scale,
+            "INT16"                    => (short)words[offset] * scale, // value ke index pe offset hai, usko signed short me convert karo, fir scale lagao
             "FLOAT32" or "FLOAT32AB"  => RegsToFloat(hi: words[offset],     lo: words[offset + 1]),
             "FLOAT32BA"               => RegsToFloat(hi: words[offset + 1], lo: words[offset]),
             _                          => words[offset] * scale,   // UInt16 default
@@ -259,7 +281,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
     // The 'hi' and 'lo' parameters depend on the DataType (Float32 vs Float32BA).
     private static float RegsToFloat(ushort hi, ushort lo)
     {
-        uint raw = ((uint)hi << 16) | lo;
+        uint raw = ((uint)hi << 16) | lo; // high word ko left shift karke low word ke sath combine karo ( left shift isliye kyu ki usse uint32 ban jata hai )
         return BitConverter.ToSingle(BitConverter.GetBytes(raw), 0);
     }
 
@@ -303,17 +325,22 @@ public class ModbusRtuPollerHostedService : BackgroundService
 
 public static class ModbusRegisterGrouping
 {
+    // source: list of registers to group, addrSelector: function to select the register address for grouping
     public static IEnumerable<List<T>> GroupContiguous<T>(
         IEnumerable<T> source,
         Func<T, int> addrSelector)
     {
+        // group to collect contiguous registers, last to track the last register address seen
         List<T> group = new();
         int? last = null;
 
+        // source ko addrSelector ke hisaab se sort karo, taaki registers address order me ho. Phir ek-ek register ko check karo:
         foreach (var item in source.OrderBy(addrSelector))
         {
             int addr = addrSelector(item);
 
+            // Agar last null hai (first item) ya current address last + 1 hai (contiguous), to group me add karo.
+            // Nahi to, pehle jo group ban chuka hai usko yield return karo, aur naye group me current item daalo.
             if (last == null || addr == last + 1)
                 group.Add(item);
             else
@@ -325,6 +352,7 @@ public static class ModbusRegisterGrouping
             last = addr;
         }
 
+        // last group ko bhi yield return karo agar usme items hain , yeild mtlb ek ek karke do , pura hone ka wait nhi kro
         if (group.Count > 0)
             yield return group;
     }
