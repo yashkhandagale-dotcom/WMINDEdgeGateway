@@ -23,7 +23,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
     {
         private readonly ILogger<ModbusPollerHostedService> _log;
         private readonly IConfiguration _config;
-        private readonly MemoryCacheService _cache;
+        private readonly IMemoryCacheService _cache;
         private readonly IInfluxDbService _influxDb; // Inject InfluxDB service
 
         private readonly SemaphoreSlim _semaphore;
@@ -35,7 +35,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         public ModbusPollerHostedService(
             ILogger<ModbusPollerHostedService> log,
             IConfiguration config,
-            MemoryCacheService cache,
+            IMemoryCacheService cache,
             IInfluxDbService influxDb)
         {
             _log = log;

@@ -13,7 +13,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
     public class OpcUaSubscriptionService 
     {
         private readonly ILogger<OpcUaSubscriptionService> _log;
-        private readonly MemoryCacheService _cache;
+        private readonly IMemoryCacheService _cache;
         private readonly IInfluxDbService _influxDb;
 
         private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
@@ -26,7 +26,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
         public OpcUaSubscriptionService(
             ILogger<OpcUaSubscriptionService> log,
-            MemoryCacheService cache,
+            IMemoryCacheService cache,
             IInfluxDbService influxDb)
         {
             _log = log;

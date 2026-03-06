@@ -13,7 +13,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
     public class OpcUaPollerHostedService : BackgroundService
     {
         private readonly ILogger<OpcUaPollerHostedService> _log;
-        private readonly MemoryCacheService _cache;
+        private readonly IMemoryCacheService _cache;
         private readonly IInfluxDbService _influxDb;
 
         private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
@@ -25,7 +25,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
         public OpcUaPollerHostedService(
             ILogger<OpcUaPollerHostedService> log,
-            MemoryCacheService cache,
+            IMemoryCacheService cache,
             IInfluxDbService influxDb)
         {
             _log = log;

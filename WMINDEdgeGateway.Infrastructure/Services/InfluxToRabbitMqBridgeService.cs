@@ -180,7 +180,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     //Console.WriteLine($"   Total records: {totalRecords}");
 
                     //_log.LogDebug("📊 Query returned {TableCount} tables with {RecordCount} total records",
-                        //tables.Count, totalRecords);
+                    //tables.Count, totalRecords);
 
                     //if (totalRecords == 0)
                     //{

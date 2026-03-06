@@ -36,7 +36,7 @@ IAuthClient authClient            = new AuthClient(authHttp);
 IMemoryCache memoryCache          = new MemoryCache(new MemoryCacheOptions());
 var tokenService                  = new TokenService(authClient, memoryCache, gatewayClientId, gatewayClientSecret);
 IDeviceServiceClient deviceClient = new DeviceServiceClient(deviceHttp, tokenService);
-var cache                         = new MemoryCacheService();
+IMemoryCacheService cache         = new MemoryCacheService();
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Debug));
