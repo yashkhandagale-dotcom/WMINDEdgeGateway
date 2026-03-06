@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -13,6 +14,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly HttpClient _http;
         private readonly TokenService _tokenService;
 
+        // MOCK URL
+        private const string MOCK_OPC_URL =
+            "https://699d723483e60a406a4651d6.mockapi.io/devices";
+
         public DeviceServiceClient(HttpClient http, TokenService tokenService)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
@@ -24,39 +29,66 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             if (string.IsNullOrWhiteSpace(gatewayId))
                 throw new ArgumentException("Gateway ID cannot be empty", nameof(gatewayId));
 
-            async Task<HttpResponseMessage> SendRequest()
-            {
-                var token = await _tokenService.GetTokenAsync();
+            //GET TOKEN
+            var token = await _tokenService.GetTokenAsync();
 
-                _http.DefaultRequestHeaders.Authorization =
+            if (string.IsNullOrWhiteSpace(token))
+                throw new InvalidOperationException("TokenService returned an empty token.");
+
+            // GET BACKEND CONFIGS (MODBUS)
+            DeviceConfigurationDto[] backendConfigs = Array.Empty<DeviceConfigurationDto>();
+
+            try
+            {
+                var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    $"api/devices/devices/configurations/gateway/{gatewayId}"
+                );
+
+                request.Headers.Authorization =
                     new AuthenticationHeaderValue("Bearer", token);
 
-                return await _http.GetAsync($"/api/devices/devices/configurations/gateway/{gatewayId}");
+                var response = await _http.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+
+                var apiResponse =
+                    await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
+
+                if (apiResponse != null && apiResponse.Success && apiResponse.Data != null)
+                    backendConfigs = apiResponse.Data;
             }
-
-            // First call
-            var response = await SendRequest();
-
-            // If token expired → refresh & retry once
-            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            catch (Exception ex)
             {
-                Console.WriteLine("401 Unauthorized → Refreshing token & retrying...");
-
-                response = await SendRequest();
+                Console.WriteLine($"Backend config fetch failed: {ex.Message}");
             }
 
-            response.EnsureSuccessStatusCode();
+            // GET MOCK OPC CONFIGS
+            DeviceConfigurationDto[] mockConfigs = Array.Empty<DeviceConfigurationDto>();
 
-            var apiResponse = await response.Content
-                .ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
+            //try
+            //{
+            //    using var mockHttp = new HttpClient();
 
-            if (apiResponse == null)
-                return Array.Empty<DeviceConfigurationDto>();
+            //    var result =
+            //        await mockHttp.GetFromJsonAsync<DeviceConfigurationDto[]>(MOCK_OPC_URL);
 
-            if (!apiResponse.Success)
-                throw new Exception($"API Error: {apiResponse.Error}");
+            //    if (result != null)
+            //        mockConfigs = result;
+            //}
+            //catch (Exception ex)
+            //{
+            //    Console.WriteLine($"Mock OPC fetch failed: {ex.Message}");
+            //}
 
-            return apiResponse.Data ?? Array.Empty<DeviceConfigurationDto>();
+            // MERGE BOTH
+            var merged = backendConfigs
+                .Concat(mockConfigs)
+                .ToArray();
+
+            Console.WriteLine(
+                $"Loaded configs → Backend:{backendConfigs.Length} + MockOPC:{mockConfigs.Length} = Total:{merged.Length}");
+
+            return merged;
         }
     }
 }

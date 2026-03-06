@@ -1,4 +1,4 @@
-﻿namespace WMINDEdgeGateway.Domain
+﻿namespace WMINDEdgeGateway.Test
 {
     public class Class1
     {
