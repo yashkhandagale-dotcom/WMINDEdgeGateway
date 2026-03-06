@@ -17,7 +17,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
 {
     private readonly ILogger<ModbusRtuPollerHostedService> _log;
     private readonly IConfiguration _config;
-    private readonly MemoryCacheService _cache;
+    private readonly IMemoryCacheService _cache;
     private readonly IInfluxDbService _influxDb;
 
     private static readonly object _consoleLock = new();
@@ -26,7 +26,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
     public ModbusRtuPollerHostedService(
         ILogger<ModbusRtuPollerHostedService> log,
         IConfiguration config,
-        MemoryCacheService cache,
+        IMemoryCacheService cache,
         IInfluxDbService influxDb)
     {
         _log = log;
@@ -175,7 +175,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 .Where(r => r.SignalId.HasValue && r.SignalId != Guid.Empty)
                 .Select(r =>
                 {
-                    r.RegisterAddress = ConvertPlcToZeroBased(r.RegisterAddress);
+                    r.RegisterAddress = ModbusDecoder.ConvertPlcToZeroBased(r.RegisterAddress);
                     return r;
                 })
                 .OrderBy(r => r.RegisterAddress)
@@ -195,7 +195,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 // kitne words padhne hain. Float32 ko 2 words chahiye (32 bits = 2×16 bits), baaki sab 1 word.
                 // count = chunk me jitne registers hain, unka total word count nikalte hain.
                 // Har register ke DataType ke hisaab se word count nikalte hain aur sum karte hain.
-                ushort count = (ushort)chunk.Sum(r => WordCount(r.DataType));
+                ushort count = (ushort)chunk.Sum(r => ModbusDecoder.WordCount(r.DataType));
 
                 // check if the requested range exceeds Modbus limits (0-65535)
                 if (start + count > 65535)
@@ -230,7 +230,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 int offset = 0;
                 foreach (var reg in chunk)
                 {
-                    int wc = WordCount(reg.DataType);
+                    int wc = ModbusDecoder.WordCount(reg.DataType);
                     if (offset + wc > values.Length)
                     {
                         _log.LogWarning("Not enough registers at addr {Addr}", reg.RegisterAddress);
@@ -238,7 +238,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                     }
 
                     // Decode the raw register values to a double using the specified DataType and Scale
-                    double value = DecodeRegister(reg.DataType, values, offset, reg.Scale);
+                    double value = ModbusDecoder.DecodeRegister(reg.DataType, values, offset, reg.Scale);
 
                     // Add a telemetry payload for this register if it has a valid SignalId
                     payloads.Add(new TelemetryPayload(
@@ -262,8 +262,8 @@ public class ModbusRtuPollerHostedService : BackgroundService
     }
 
     // Returns how many 16-bit words a DataType occupies
-    private static int WordCount(string? dataType) =>
-        dataType?.ToUpperInvariant() is "FLOAT32" or "FLOAT32AB" or "FLOAT32BA" ? 2 : 1;
+    //private static int WordCount(string? dataType) =>
+    //    dataType?.ToUpperInvariant() is "FLOAT32" or "FLOAT32AB" or "FLOAT32BA" ? 2 : 1;
 
     // Decodes raw register words to a double value.
     //
@@ -273,32 +273,32 @@ public class ModbusRtuPollerHostedService : BackgroundService
     //   "Float32"   – IEEE-754 float, high word first  (most PLCs — try this first)
     //   "Float32AB" – same as Float32
     //   "Float32BA" – IEEE-754 float, low word first   (if Float32 gives wrong value, use this)
-    private static double DecodeRegister(string? dataType, ushort[] words, int offset, double scale)
-    {
-        return dataType?.ToUpperInvariant() switch
-        {
-            "INT16"                    => (short)words[offset] * scale, // value ke index pe offset hai, usko signed short me convert karo, fir scale lagao
-            "FLOAT32" or "FLOAT32AB"  => RegsToFloat(hi: words[offset],     lo: words[offset + 1]),
-            "FLOAT32BA"               => RegsToFloat(hi: words[offset + 1], lo: words[offset]),
-            _                          => words[offset] * scale,   // UInt16 default
-        };
-    }
+    //private static double DecodeRegister(string? dataType, ushort[] words, int offset, double scale)
+    //{
+    //    return dataType?.ToUpperInvariant() switch
+    //    {
+    //        "INT16"                    => (short)words[offset] * scale, // value ke index pe offset hai, usko signed short me convert karo, fir scale lagao
+    //        "FLOAT32" or "FLOAT32AB"  => RegsToFloat(hi: words[offset],     lo: words[offset + 1]),
+    //        "FLOAT32BA"               => RegsToFloat(hi: words[offset + 1], lo: words[offset]),
+    //        _                          => words[offset] * scale,   // UInt16 default
+    //    };
+    //}
 
     // Combines two 16-bit register values into a 32-bit float.
     // The 'hi' and 'lo' parameters depend on the DataType (Float32 vs Float32BA).
-    private static float RegsToFloat(ushort hi, ushort lo)
-    {
-        uint raw = ((uint)hi << 16) | lo; // high word ko left shift karke low word ke sath combine karo ( left shift isliye kyu ki usse uint32 ban jata hai )
-        return BitConverter.ToSingle(BitConverter.GetBytes(raw), 0);
-    }
+    //private static float RegsToFloat(ushort hi, ushort lo)
+    //{
+    //    uint raw = ((uint)hi << 16) | lo; // high word ko left shift karke low word ke sath combine karo ( left shift isliye kyu ki usse uint32 ban jata hai )
+    //    return BitConverter.ToSingle(BitConverter.GetBytes(raw), 0);
+    //}
 
-    // converts PLC-style 1-based register addresses (e.g. 40001) to zero-based addresses for Modbus (e.g. 0)
-    private static int ConvertPlcToZeroBased(int plcAddress)
-    {
-        if (plcAddress >= 40001 && plcAddress <= 49999)
-            return plcAddress - 40001;
-        return plcAddress;
-    }
+    //// converts PLC-style 1-based register addresses (e.g. 40001) to zero-based addresses for Modbus (e.g. 0)
+    //private static int ConvertPlcToZeroBased(int plcAddress)
+    //{
+    //    if (plcAddress >= 40001 && plcAddress <= 49999)
+    //        return plcAddress - 40001;
+    //    return plcAddress;
+    //}
 
     // Simple console output to visualize the latest telemetry values for each device.
     // This is optional and can be removed in production.
