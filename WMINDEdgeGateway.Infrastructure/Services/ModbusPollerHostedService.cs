@@ -11,6 +11,12 @@ using System.Threading.Tasks;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
+using InfluxDB.Client;
+using InfluxDB.Client.Api.Domain;
+using InfluxDB.Client.Writes;
+
+
+
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
@@ -31,6 +37,9 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly ConcurrentDictionary<Guid, Task> _deviceTasks = new();
 
         private readonly int _failThreshold;
+        private readonly InfluxDBClient _influxClient;
+        private readonly string _bucket;
+        private readonly string _org;
 
         public ModbusPollerHostedService(
             ILogger<ModbusPollerHostedService> log,
