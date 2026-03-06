@@ -65,7 +65,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             var rabbitConfig = _config.GetSection("RabbitMq");
 
             var hostname = rabbitConfig["HostName"] ?? "localhost";
-            var port = int.Parse(rabbitConfig["Port"] ?? "5672");
+            var port = int.Parse(rabbitConfig["Port"] ?? "5671");
             var username = rabbitConfig["UserName"] ?? "guest";
 
             Console.WriteLine("\n🔌 RABBITMQ CONNECTION ATTEMPT:");
@@ -79,14 +79,21 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             var factory = new ConnectionFactory()
             {
                 HostName = hostname,
-                Port = 5672,
-                UserName = "guest",
-                Password = "guest",
+                Port = port,
+                UserName = rabbitConfig["userName"],
+                Password = rabbitConfig["Password"],
                 VirtualHost = "/",
                 AutomaticRecoveryEnabled = true,
                 RequestedConnectionTimeout = TimeSpan.FromSeconds(30),
                 SocketReadTimeout = TimeSpan.FromSeconds(30),
-                SocketWriteTimeout = TimeSpan.FromSeconds(30)
+                SocketWriteTimeout = TimeSpan.FromSeconds(30),
+                Ssl = new SslOption
+                {
+                    Enabled = true,
+                    ServerName = "rabbitmq",
+                    CertPath = "",
+                    Version = System.Security.Authentication.SslProtocols.Tls12
+                }
             };
 
             try
