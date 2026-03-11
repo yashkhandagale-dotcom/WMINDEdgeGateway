@@ -26,14 +26,14 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
         public async Task<string> GetTokenAsync()
         {
-            if (_cache.TryGetValue(CacheKey, out string token))
-                return token;
+            if (_cache.TryGetValue(CacheKey, out string? token))
+                return token!;
 
             await _lock.WaitAsync();
             try
             {
                 if (_cache.TryGetValue(CacheKey, out token))
-                    return token;
+                    return token!;
 
                 var tokenResponse = await _authClient.GetTokenAsync(_clientId, _clientSecret);
 

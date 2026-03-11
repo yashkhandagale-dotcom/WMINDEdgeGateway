@@ -172,6 +172,12 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             _sessions[deviceConfig.Id] = session;
 
+            if (string.IsNullOrWhiteSpace(deviceConfig.ConnectionString))
+            {
+                _log.LogError("Invalid OPC UA connection string for device {Device}", deviceConfig.DeviceName);
+                return;
+            }
+
             var uri = new Uri(deviceConfig.ConnectionString);
             var ip = uri.Host;
             var port = uri.Port;

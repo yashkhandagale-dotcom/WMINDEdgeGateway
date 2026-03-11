@@ -37,10 +37,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly ConcurrentDictionary<Guid, Task> _deviceTasks = new();
 
         private readonly int _failThreshold;
-        private readonly InfluxDBClient _influxClient;
-        private readonly string _bucket;
-        private readonly string _org;
-
+        
         public ModbusPollerHostedService(
             ILogger<ModbusPollerHostedService> log,
             IConfiguration config,

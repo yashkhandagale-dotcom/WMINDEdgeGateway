@@ -4,9 +4,6 @@ using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
-using System.Text;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace WMINDEdgeGateway.Infrastructure.Caching
 {
