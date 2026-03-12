@@ -7,8 +7,8 @@
             return dataType?.ToUpperInvariant() switch
             {
                 "INT16" => (short)words[offset] * scale,
-                "FLOAT32" or "FLOAT32AB" => RegsToFloat(hi: words[offset], lo: words[offset + 1]),
-                "FLOAT32BA" => RegsToFloat(hi: words[offset + 1], lo: words[offset]),
+                "FLOAT32" or "FLOAT32AB" => RegsToFloat(hi: words[offset], lo: words[offset + 1])*scale,
+                "FLOAT32BA" => RegsToFloat(hi: words[offset + 1], lo: words[offset])*scale,
                 _ => words[offset] * scale
             };
         }

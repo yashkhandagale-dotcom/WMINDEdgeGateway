@@ -43,7 +43,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             _bucket = config["InfluxDB:Bucket"] ?? "SignalTelemetryData";
             _org = config["InfluxDB:Org"] ?? "WMIND";
 
-            _queueName = config["RabbitMq:QueueName"] ?? "telemetry_queue";
+            var gatewayUser = config["RabbitMq:UserName"];
+            _queueName = $"{gatewayUser}_queue";
 
             _pollIntervalSeconds = config.GetValue<int?>("RabbitMq:PollIntervalSeconds") ?? 5;
 

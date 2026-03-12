@@ -239,7 +239,15 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 session.AddSubscription(subscription);
                 subscription.Create();
 
-                var uri = new Uri(deviceConfig.ConnectionString);
+                if (!Uri.TryCreate(deviceConfig.ConnectionString, UriKind.Absolute, out var uri))
+                {
+                    _log.LogError(
+                        "Invalid OPC UA connection string for device {Device}: {Uri}",
+                        deviceConfig.DeviceName,
+                        deviceConfig.ConnectionString);
+
+                    return null;
+                }
                 var ip = uri.Host;
                 var port = uri.Port;
 

@@ -128,7 +128,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
         using var master  = factory.CreateRtuMaster(adapter); // RTU master banate hain jo serial adapter ke through communicate karega
 
         //  Request bheja → No response → Wait 200ms
-        master.Transport.Retries                 = failureThreshold; // RTU communication me, agar ek request fail ho jati hai (e.g. timeout), to master automatically retry karta hai. Yahan hum 2 retries set kar rahe hain.
+        master.Transport.Retries                 = failureThreshold; // RTU communication me, agar ek request fail ho jati hai (e.g. timeout), to master automatically retry karta hai. Yahan hum 3 retries set kar rahe hain.
         master.Transport.WaitToRetryMilliseconds = 200; // Agar retry karna pade, to pehle 200ms wait karega before retrying. RTU me thoda delay dena achha hota hai.
 
         while (!ct.IsCancellationRequested)
