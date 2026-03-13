@@ -33,8 +33,4 @@
 	  <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Folder Include="cert\" />
-	</ItemGroup>
-
 </Project>

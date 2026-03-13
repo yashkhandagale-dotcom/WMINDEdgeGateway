@@ -14,7 +14,7 @@ using WMINDEdgeGateway.Infrastructure.Caching;
 using InfluxDB.Client;
 using InfluxDB.Client.Api.Domain;
 using InfluxDB.Client.Writes;
-
+using WMINDEdgeGateway.Infrastructure.Diagnostics;
 
 
 
@@ -56,7 +56,14 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             if (concurrency <= 0) concurrency = 10;
             _semaphore = new SemaphoreSlim(concurrency, concurrency);
         }
-
+        private static void ReportDevice(string name, string ip, bool ok, string? error = null)
+        {
+            var d = GatewayDiagnosticsState.Instance.ModbusTcpDevices
+                .GetOrAdd(name, _ => new DeviceStatus { DeviceName = name, Address = ip });
+            d.State = ok ? "connected" : (error?.ToLower().Replace(" ", "_") ?? "error");
+            d.LastError = ok ? null : error;
+            d.LastUpdated = DateTime.UtcNow;
+        }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _log.LogInformation("Modbus poller started with InfluxDB integration.");
@@ -209,6 +216,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, connectCts.Token);
 
                 await tcp.ConnectAsync(ip, port, linked.Token);
+                ReportDevice(deviceConfig.DeviceName, ip, ok: true);
 
                 // Single timestamp for the entire poll batch
                 var now = DateTime.UtcNow;
@@ -383,10 +391,12 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 // Connection timeout (not application shutdown)
                 _log.LogWarning("Connection timeout for device {Device} at {Ip}:{Port}",
                     deviceConfig.Id, ip, port);
+                ReportDevice(deviceConfig.DeviceName, ip, ok: false, "Timeout");
             }
             catch (SocketException s_ex)
             {
                 _log.LogWarning(s_ex, "Device {Device} unreachable at {Ip}:{Port}", deviceConfig.Id, ip, port);
+                ReportDevice(deviceConfig.DeviceName, ip, ok: false, "No Response");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
