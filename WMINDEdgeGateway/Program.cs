@@ -106,7 +106,11 @@ try
                     string.Equals(c.OpcUaMode, "PubSub", StringComparison.OrdinalIgnoreCase))
         .ToList();
 
-    if (!modbusDevices.Any() && !modbusRtuDevices.Any()  && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any())
+    var cameraDevices = configList
+    .Where(c => c.Protocol == 3)
+    .ToList();
+
+    if (!modbusDevices.Any() && !modbusRtuDevices.Any()  && !opcuaPollingDevices.Any() && !opcuaPubSubDevices.Any() && !cameraDevices.Any())
     {
         Console.WriteLine("No devices found to poll. Exiting.");
         return;
@@ -160,6 +164,35 @@ try
         Console.WriteLine("OPC-UA subscription service started -> writing to InfluxDB.");
     }
 
+   if (cameraDevices.Any())
+{
+    Console.WriteLine($"Starting Camera frame capture for {cameraDevices.Count} device(s)...");
+    cache.Set("CameraDevices", cameraDevices, TimeSpan.FromMinutes(30));
+
+    // ── S3 config ─────────────────────────────────────────────────────────
+    var s3Region     = configuration["AWS:Region"]     ?? "ap-south-1";
+    var s3BucketName = configuration["AWS:BucketName"] ?? throw new Exception("Missing AWS:BucketName");
+    var s3AccessKey  = configuration["AWS:AccessKey"]  ?? throw new Exception("Missing AWS:AccessKey");
+    var s3SecretKey  = configuration["AWS:SecretKey"]  ?? throw new Exception("Missing AWS:SecretKey");
+
+   var s3Config = new Amazon.S3.AmazonS3Config
+        {
+            ServiceURL = "http://localhost:9000", // MinIO endpoint
+            ForcePathStyle = true // VERY IMPORTANT for MinIO
+        };
+
+    var s3Client = new Amazon.S3.AmazonS3Client(s3AccessKey, s3SecretKey, s3Config);
+
+    var s3UploaderLogger = loggerFactory.CreateLogger<S3UploaderService>();
+    IS3UploaderService s3Uploader = new S3UploaderService(s3Client, s3UploaderLogger, s3BucketName);
+
+    var cameraLogger  = loggerFactory.CreateLogger<CameraPollerHostedService>();
+    var cameraPoller  = new CameraPollerHostedService(cameraLogger, s3Uploader, cameraDevices);
+
+    _ = Task.Run(() => cameraPoller.StartAsync(cts.Token));
+    Console.WriteLine("Camera poller started → capturing frames → uploading to S3.");
+}
+   
     // ── Bridge (InfluxDB → RabbitMQ) ──────────────────────────────────────────
     await bridgeService.StartAsync(cts.Token);
     //Console.WriteLine("Bridge service started -> reading InfluxDB and pushing to RabbitMQ.");
