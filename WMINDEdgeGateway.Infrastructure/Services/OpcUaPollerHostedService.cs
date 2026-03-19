@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
+using WMINDEdgeGateway.Infrastructure.Diagnostics;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
@@ -32,7 +33,15 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             _cache = cache;
             _influxDb = influxDb;
         }
-
+        private static void ReportDevice(string name, string mode, bool ok, string? error = null)
+        {
+            var d = GatewayDiagnosticsState.Instance.OpcUaDevices
+                .GetOrAdd(name, _ => new DeviceStatus { DeviceName = name });
+            d.Mode = mode;
+            d.State = ok ? "connected" : "broken";
+            d.LastError = ok ? null : error;
+            d.LastUpdated = DateTime.UtcNow;
+        }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _log.LogInformation("OPC UA Poller started.");
@@ -236,6 +245,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         "Failed reading node {Node} for device {Device}",
                         node.NodeId,
                         deviceConfig.DeviceName);
+                    ReportDevice(deviceConfig.DeviceName, "polling", ok: false, "Timeout");
                 }
             }
 
@@ -276,6 +286,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     "Failed to write {Count} points to InfluxDB for device {Device}",
                     payloads.Count,
                     deviceConfig.DeviceName);
+
             }
         }
 
@@ -307,7 +318,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 _log.LogInformation(
                     "Connected to OPC UA server {Device}",
                     deviceConfig.DeviceName);
-
+                ReportDevice(deviceConfig.DeviceName, "polling", ok: true);
                 return session;
             }
             catch (Exception ex)
@@ -315,6 +326,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 _log.LogError(ex,
                     "Connection failed for device {Device}",
                     deviceConfig.DeviceName);
+                ReportDevice(deviceConfig.DeviceName, "polling", ok: false, "Session Broken");
                 return null;
             }
         }

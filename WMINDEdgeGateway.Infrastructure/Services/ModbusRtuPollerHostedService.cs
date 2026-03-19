@@ -7,6 +7,7 @@ using System.IO.Ports;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
+using WMINDEdgeGateway.Infrastructure.Diagnostics;
 
 
 namespace WMINDEdgeGateway.Infrastructure.Services;
@@ -33,6 +34,14 @@ public class ModbusRtuPollerHostedService : BackgroundService
         _config = config;
         _cache = cache;
         _influxDb = influxDb;
+    }
+    private static void ReportDevice(string name, int slaveId, bool ok, string? error = null)
+    {
+        var d = GatewayDiagnosticsState.Instance.ModbusRtuDevices
+            .GetOrAdd(name, _ => new DeviceStatus { DeviceName = name, Address = slaveId.ToString() });
+        d.State = ok ? "connected" : (error?.ToLower().Replace(" ", "_") ?? "error");
+        d.LastError = ok ? null : error;
+        d.LastUpdated = DateTime.UtcNow;
     }
 
     // Main execution loop of the hosted service. It retrieves device configs from cache
@@ -113,6 +122,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
         catch (Exception ex)
         {
             _log.LogError(ex, "Failed to open {Port}", portName);
+
             return;
         }
 
@@ -142,6 +152,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    ReportDevice(device.DeviceName, 0, ok: false, "No Response");
                     _log.LogError(ex, "RTU poll error for {Device}", device.DeviceName);
                 }
 
@@ -210,7 +221,8 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 {
                     // Read the entire range of registers for the chunk, not just one register
                     values = master.ReadHoldingRegisters((byte)slave.SlaveIndex, start, count);
-                    
+                    ReportDevice(device.DeviceName, slave.SlaveIndex, ok: true);
+
                     // yeh actual Modbus request hai! NModbus yahan:
                     //  Frame banata hai:
                     //  [SlaveID] [03][start_hi][start_lo][count_hi][count_lo][CRC_lo][CRC_hi]
@@ -223,6 +235,7 @@ public class ModbusRtuPollerHostedService : BackgroundService
                 {
                     _log.LogError(ex, "Slave {Slave} rejected range {Start}-{End}",
                         slave.SlaveIndex, start, start + count - 1);
+                    ReportDevice(device.DeviceName, slave.SlaveIndex, ok: false, "CRC Error");
                     continue;
                 }
 
