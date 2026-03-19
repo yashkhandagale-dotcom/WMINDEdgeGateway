@@ -36,9 +36,9 @@ namespace WMINDEdgeGateway.Infrastructure.Diagnostics
         /// </summary>
         public static string[] HourlyBar(IReadOnlyList<DowntimeRecord> history)
         {
-            var today = DateTime.UtcNow.Date;
+            var today = DateTime.Now.Date;   
             var bar = new string[24];
-            var nowHour = DateTime.UtcNow.Hour;
+            var nowHour = DateTime.Now.Hour;
 
             for (int h = 0; h < 24; h++)
             {
@@ -48,7 +48,8 @@ namespace WMINDEdgeGateway.Infrastructure.Diagnostics
                 var slotEnd = slotStart.AddHours(1);
 
                 bool hasDowntime = history.Any(r =>
-                    r.Start < slotEnd && r.End > slotStart);
+                r.Start.ToLocalTime() < slotEnd &&
+                r.End.ToLocalTime() > slotStart);
 
                 bar[h] = hasDowntime ? "down" : "up";
             }
