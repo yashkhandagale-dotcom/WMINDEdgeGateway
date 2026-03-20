@@ -70,6 +70,47 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             Console.WriteLine("\n🔌 RABBITMQ CONNECTION ATTEMPT:");
             Console.WriteLine($"   Host: {hostname}  Port: {port}  User: {username}");
 
+            // ── TLS: enabled when port is 5671, plain when 5672 ───────────────
+            var useTls = port == 5671;
+            var caCertPath = _config["RabbitMq:CaCertPath"] ?? "/app/ca.crt";
+
+            var sslOption = new SslOption
+            {
+                Enabled = useTls,
+                ServerName = hostname,
+                Version = System.Security.Authentication.SslProtocols.Tls12,
+            };
+
+            if (useTls && System.IO.File.Exists(caCertPath))
+            {
+                // Validate server cert against our CA
+                sslOption.CertificateValidationCallback = (sender, cert, chain, errors) =>
+                {
+                    if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+
+                    var caCert = new System.Security.Cryptography.X509Certificates.X509Certificate2(caCertPath);
+                    chain!.ChainPolicy.ExtraStore.Add(caCert);
+                    chain.ChainPolicy.VerificationFlags =
+                        System.Security.Cryptography.X509Certificates.X509VerificationFlags.AllowUnknownCertificateAuthority;
+                    chain.ChainPolicy.RevocationMode =
+                        System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
+                    return chain.Build(
+                        (System.Security.Cryptography.X509Certificates.X509Certificate2)cert!);
+                };
+                Console.WriteLine($"   TLS: enabled  CA cert: {caCertPath}");
+            }
+            else if (useTls)
+            {
+                // ca.crt not found — accept any cert (dev fallback)
+                sslOption.CertificateValidationCallback = (_, _, _, _) => true;
+                Console.WriteLine($"   TLS: enabled  CA cert: NOT FOUND — accepting any cert");
+            }
+            else
+            {
+                Console.WriteLine($"   TLS: disabled (plain AMQP)");
+            }
+            // ─────────────────────────────────────────────────────────────────
+
             var factory = new ConnectionFactory
             {
                 HostName = hostname,
@@ -81,13 +122,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 RequestedConnectionTimeout = TimeSpan.FromSeconds(30),
                 SocketReadTimeout = TimeSpan.FromSeconds(30),
                 SocketWriteTimeout = TimeSpan.FromSeconds(30),
-                Ssl = new SslOption
-                {
-                    Enabled = false,   // Assuming local network - set to true and configure certs for production
-                    ServerName = "rabbitmq",
-                    CertPath = "",
-                    Version = System.Security.Authentication.SslProtocols.Tls12
-                }
+                Ssl = sslOption
             };
 
             try
@@ -115,12 +150,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             }
             catch (RabbitMQ.Client.Exceptions.BrokerUnreachableException ex)
             {
-                // ── diagnostics: disconnected ──────────────────────────────────
                 var s = GatewayDiagnosticsState.Instance.RabbitMqStatus;
                 s.State = "disconnected";
                 s.ErrorMessage = ex.Message;
                 s.LastCheckedUtc = DateTime.UtcNow;
-                // ─────────────────────────────────────────────────────────────
 
                 Console.WriteLine($"❌ RABBITMQ FAILED: {ex.Message}");
                 _log.LogError(ex, "❌ Cannot reach RabbitMQ broker at {Host}:{Port}", hostname, port);
@@ -128,12 +161,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                // ── diagnostics: error ─────────────────────────────────────────
                 var s = GatewayDiagnosticsState.Instance.RabbitMqStatus;
                 s.State = "disconnected";
                 s.ErrorMessage = ex.Message;
                 s.LastCheckedUtc = DateTime.UtcNow;
-                // ─────────────────────────────────────────────────────────────
 
                 Console.WriteLine($"❌ RABBITMQ FAILED: {ex.Message}");
                 _log.LogError(ex, "❌ Failed to initialize RabbitMQ connection");
@@ -153,10 +184,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 {
                     iterationCount++;
                     var currentTime = DateTime.UtcNow;
-
-                    // ── FIX: declare syncStart HERE (top of loop iteration) ────
                     var syncStart = DateTime.UtcNow;
-                    // ─────────────────────────────────────────────────────────
 
                     var startTimeFormatted = _lastProcessedTime.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
 
@@ -224,7 +252,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         }
                     }
 
-                    // ── FIX: diagnostics update OUTSIDE the record loop ────────
                     var sync = GatewayDiagnosticsState.Instance.CloudSyncStatus;
                     sync.State = "syncing";
                     sync.SyncLagSeconds = (DateTime.UtcNow - syncStart).TotalSeconds;
@@ -233,7 +260,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     var rmq = GatewayDiagnosticsState.Instance.RabbitMqStatus;
                     rmq.State = (_channel?.IsOpen == true) ? "connected" : "retrying";
                     rmq.LastCheckedUtc = DateTime.UtcNow;
-                    // ─────────────────────────────────────────────────────────
 
                     _lastProcessedTime = currentTime;
 
@@ -246,12 +272,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 }
                 catch (Exception ex)
                 {
-                    // ── diagnostics: error ─────────────────────────────────────
                     GatewayDiagnosticsState.Instance.RabbitMqStatus.State = "error";
                     GatewayDiagnosticsState.Instance.RabbitMqStatus.ErrorMessage = ex.Message;
                     GatewayDiagnosticsState.Instance.CloudSyncStatus.State = "error";
                     GatewayDiagnosticsState.Instance.CloudSyncStatus.ErrorMessage = ex.Message;
-                    // ─────────────────────────────────────────────────────────
 
                     Console.WriteLine($"\n❌ ERROR IN BRIDGE: {ex.GetType().Name}: {ex.Message}");
                     _log.LogError(ex, "❌ Error in InfluxDB to RabbitMQ bridge");
