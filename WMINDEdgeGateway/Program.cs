@@ -11,6 +11,7 @@ Console.WriteLine("Edge Gateway Starting...");
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddEnvironmentVariables()
     .Build();
 
 string gatewayClientId =
