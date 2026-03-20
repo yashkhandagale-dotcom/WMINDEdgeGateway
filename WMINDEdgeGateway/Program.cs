@@ -187,7 +187,7 @@ try
     IS3UploaderService s3Uploader = new S3UploaderService(s3Client, s3UploaderLogger, s3BucketName);
 
     var cameraLogger  = loggerFactory.CreateLogger<CameraPollerHostedService>();
-    var cameraPoller  = new CameraPollerHostedService(cameraLogger, s3Uploader, cameraDevices);
+    var cameraPoller  = new CameraPollerHostedService(cameraLogger, s3Uploader, cache);
 
     _ = Task.Run(() => cameraPoller.StartAsync(cts.Token));
     Console.WriteLine("Camera poller started → capturing frames → uploading to S3.");
