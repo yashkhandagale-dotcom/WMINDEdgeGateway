@@ -1,19 +1,89 @@
-version: "3.8"
-
 services:
+
+  # ── Edge Gateway ────────────────────────────────────────────────────────────
+  edge-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wmind-edge-gateway:latest
+    container_name: edge-gateway
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # ── Logging
+      Logging__LogLevel__Default: "${LOGGING_LEVEL_DEFAULT:-Information}"
+      Logging__LogLevel__Microsoft: "${LOGGING_LEVEL_MICROSOFT:-Warning}"
+
+      # ── Modbus TCP
+      Modbus__MaxConcurrentPolls: "${MODBUS_MAX_CONCURRENT_POLLS:-10}"
+      Modbus__FailureThreshold: "${MODBUS_FAILURE_THRESHOLD:-3}"
+
+      # ── Modbus RTU
+      ModbusRtu__FailureThreshold: "${MODBUS_RTU_FAILURE_THRESHOLD:-2}"
+      ModbusRtu__InterFrameGapMs: "${MODBUS_RTU_INTERFRAME_GAP_MS:-5}"
+      ModbusRtu__ResponseTimeoutMs: "${MODBUS_RTU_RESPONSE_TIMEOUT_MS:-3000}"
+      ModbusRtu__DataBits: "${MODBUS_RTU_DATA_BITS:-8}"
+      ModbusRtu__StopBits: "${MODBUS_RTU_STOP_BITS:-1}"
+
+      # ── InfluxDB
+      InfluxDB__Url: "${INFLUXDB_URL:-http://influxdb:8086}"
+      InfluxDB__Token: "${INFLUXDB_TOKEN}"
+      InfluxDB__Org: "${INFLUXDB_ORG:-Wonderbiz}"
+      InfluxDB__Bucket: "${INFLUXDB_BUCKET:-SignalGateway}"
+
+      # ── M2M
+      M2M__ClientId: "${M2M_CLIENT_ID}"
+      M2M__ClientSecret: "${M2M_CLIENT_SECRET}"
+      M2M__TokenUrl: "${M2M_TOKEN_URL}"
+      M2M__ApiUrl: "${M2M_API_URL}"
+      M2M__ConfigUrl: "${M2M_CONFIG_URL}"
+
+      # ── Gateway identity
+      Gateway__ClientId: "${GATEWAY_CLIENT_ID}"
+      Gateway__ClientSecret: "${GATEWAY_CLIENT_SECRET}"
+
+      # ── Auth & Device API
+      Auth__BaseUrl: "${AUTH_BASE_URL}"
+      DeviceApi__BaseUrl: "${DEVICE_API_BASE_URL}"
+
+      # ── Cache
+      Cache__ConfigurationsMinutes: "${CACHE_CONFIGURATIONS_MINUTES:-30}"
+
+      # ── RabbitMQ
+      RabbitMq__HostName: "${RABBITMQ_HOST:-rabbitmq}"
+      RabbitMq__Port: "${RABBITMQ_PORT:-5671}"
+      RabbitMq__UserName: "${RABBITMQ_USER:-guest}"
+      RabbitMq__Password: "${RABBITMQ_PASSWORD:-guest}"
+      RabbitMq__PollIntervalSeconds: "${RABBITMQ_POLL_INTERVAL_SECONDS:-5}"
+    volumes:
+      - ./ca.crt:/app/ca.crt:ro
+    networks:
+      - tmind-net
+
+  # ── MinIO (Object Storage) ──────────────────────────────────────────────────
   minio:
     image: quay.io/minio/minio:latest
     container_name: minio
+    restart: unless-stopped
     ports:
-      - "9000:9000"   # API
-      - "9001:9001"   # Console UI
+      - "9000:9000"    # API
+      - "9001:9001"    # Console UI
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
-    restart: unless-stopped
+    networks:
+      - tmind-net
 
+# ── Named volumes ─────────────────────────────────────────────────────────────
 volumes:
   minio_data:
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  tmind-net:
+    external: true
+    name: wmind_tmind-net
