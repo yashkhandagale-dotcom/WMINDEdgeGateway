@@ -151,5 +151,10 @@ namespace WMINDEdgeGateway.Application.DTOs
 
         [JsonPropertyName("opcUaNodes")]
         public OpcUaNodeDto[] OpcUaNodes { get; set; } = Array.Empty<OpcUaNodeDto>();
+        
+        public string? ModelLink { get; set; }
+
+        public string? ProductId { get; set; }
+        public List<CameraConfigDto>? Cameras { get; set; }
     }
 }

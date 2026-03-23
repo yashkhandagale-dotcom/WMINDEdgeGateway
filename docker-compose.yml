@@ -1,5 +1,6 @@
 services:
 
+  # ── Edge Gateway ────────────────────────────────────────────────────────────
   edge-gateway:
     build:
       context: .
@@ -56,10 +57,32 @@ services:
       RabbitMq__Password: "${RABBITMQ_PASSWORD:-guest}"
       RabbitMq__PollIntervalSeconds: "${RABBITMQ_POLL_INTERVAL_SECONDS:-5}"
     volumes:
-      - ./ca.crt:/app/ca.crt:ro 
+      - ./ca.crt:/app/ca.crt:ro
     networks:
       - tmind-net
 
+  # ── MinIO (Object Storage) ──────────────────────────────────────────────────
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"    # API
+      - "9001:9001"    # Console UI
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - tmind-net
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  minio_data:
+
+# ── Networks ──────────────────────────────────────────────────────────────────
 networks:
   tmind-net:
     external: true
