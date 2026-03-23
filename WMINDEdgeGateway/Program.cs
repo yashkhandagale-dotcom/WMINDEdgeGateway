@@ -180,10 +180,11 @@ try
     var s3BucketName = configuration["AWS:BucketName"] ?? throw new Exception("Missing AWS:BucketName");
     var s3AccessKey  = configuration["AWS:AccessKey"]  ?? throw new Exception("Missing AWS:AccessKey");
     var s3SecretKey  = configuration["AWS:SecretKey"]  ?? throw new Exception("Missing AWS:SecretKey");
+     var MinIOURL  = configuration["AWS:MinIOURL"]  ?? throw new Exception("Missing AWS:MinIOURL");
 
    var s3Config = new Amazon.S3.AmazonS3Config
         {
-            ServiceURL = "http://localhost:9000", // MinIO endpoint
+            ServiceURL = MinIOURL, // MinIO endpoint
             ForcePathStyle = true // VERY IMPORTANT for MinIO
         };
 
@@ -193,7 +194,7 @@ try
     IS3UploaderService s3Uploader = new S3UploaderService(s3Client, s3UploaderLogger, s3BucketName);
 
     var cameraLogger  = loggerFactory.CreateLogger<CameraPollerHostedService>();
-    var cameraPoller  = new CameraPollerHostedService(cameraLogger, s3Uploader, cameraDevices);
+    var cameraPoller  = new CameraPollerHostedService(cameraLogger, s3Uploader, cache);
 
     _ = Task.Run(() => cameraPoller.StartAsync(cts.Token));
     Console.WriteLine("Camera poller started → capturing frames → uploading to S3.");

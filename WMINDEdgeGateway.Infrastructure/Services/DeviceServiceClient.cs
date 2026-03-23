@@ -15,8 +15,10 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly TokenService _tokenService;
 
         // MOCK URL
-        private const string MOCK_OPC_URL =
-            "https://699d723483e60a406a4651d6.mockapi.io/devices";
+        // private const string MOCK_OPC_URL =
+        //     "https://699d723483e60a406a4651d6.mockapi.io/devices";
+             private const string MOCK_OPC_URL =
+            "https://69954445b081bc23e9c288dc.mockapi.io/api/getdev/devices";
 
         public DeviceServiceClient(HttpClient http, TokenService tokenService)
         {
@@ -38,47 +40,47 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             // GET BACKEND CONFIGS (MODBUS)
             DeviceConfigurationDto[] backendConfigs = Array.Empty<DeviceConfigurationDto>();
 
-            try
-            {
-                var request = new HttpRequestMessage(
-                    HttpMethod.Get,
-                    $"api/devices/devices/configurations/gateway/{gatewayId}"
-                );
+            // try
+            // {
+            //     var request = new HttpRequestMessage(
+            //         HttpMethod.Get,
+            //         $"api/devices/devices/configurations/gateway/{gatewayId}"
+            //     );
 
-                request.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
+            //     request.Headers.Authorization =
+            //         new AuthenticationHeaderValue("Bearer", token);
 
-                var response = await _http.SendAsync(request);
-                response.EnsureSuccessStatusCode();
+            //     var response = await _http.SendAsync(request);
+            //     response.EnsureSuccessStatusCode();
 
-                var apiResponse =
-                    await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
+            //     var apiResponse =
+            //         await response.Content.ReadFromJsonAsync<ApiResponse<DeviceConfigurationDto[]>>();
 
-                if (apiResponse != null && apiResponse.Success && apiResponse.Data != null)
-                    backendConfigs = apiResponse.Data;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Backend config fetch failed: {ex.Message}");
-            }
+            //     if (apiResponse != null && apiResponse.Success && apiResponse.Data != null)
+            //         backendConfigs = apiResponse.Data;
+            // }
+            // catch (Exception ex)
+            // {
+            //     Console.WriteLine($"Backend config fetch failed: {ex.Message}");
+            // }
 
             // GET MOCK OPC CONFIGS
             DeviceConfigurationDto[] mockConfigs = Array.Empty<DeviceConfigurationDto>();
 
-            //try
-            //{
-            //    using var mockHttp = new HttpClient();
+            try
+            {
+               using var mockHttp = new HttpClient();
 
-            //    var result =
-            //        await mockHttp.GetFromJsonAsync<DeviceConfigurationDto[]>(MOCK_OPC_URL);
+               var result =
+                   await mockHttp.GetFromJsonAsync<DeviceConfigurationDto[]>(MOCK_OPC_URL);
 
-            //    if (result != null)
-            //        mockConfigs = result;
-            //}
-            //catch (Exception ex)
-            //{
-            //    Console.WriteLine($"Mock OPC fetch failed: {ex.Message}");
-            //}
+               if (result != null)
+                   mockConfigs = result;
+            }
+            catch (Exception ex)
+            {
+               Console.WriteLine($"Mock OPC fetch failed: {ex.Message}");
+            }
 
             // MERGE BOTH
             var merged = backendConfigs
