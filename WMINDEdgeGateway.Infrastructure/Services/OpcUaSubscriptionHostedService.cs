@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
 using WMINDEdgeGateway.Infrastructure.Caching;
+using WMINDEdgeGateway.Infrastructure.Diagnostics;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
@@ -34,6 +35,15 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             _influxDb = influxDb;
         }
 
+        private static void ReportDevice(string name, bool ok, string? error = null)
+        {
+            var d = GatewayDiagnosticsState.Instance.OpcUaDevices
+                .GetOrAdd(name, _ => new DeviceStatus { DeviceName = name });
+            d.Mode = "subscribed";
+            d.State = ok ? "connected" : "broken";
+            d.LastError = ok ? null : error;
+            d.LastUpdated = DateTime.UtcNow;
+        }
         public async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _log.LogInformation("OPC UA Subscription (PubSub) service started.");
@@ -90,6 +100,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 {
                     _log.LogError(ex, "Device {Device} failed on attempt {Attempt}.",
                         deviceConfig.DeviceName, attempt);
+                    ReportDevice(deviceConfig.DeviceName, ok: false, "Session Broken");
                 }
 
                 if (attempt >= maxRetries)
@@ -420,6 +431,8 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                     null,
                     null);
 
+                ReportDevice(deviceConfig.DeviceName, ok: true);
+
                 _log.LogInformation(
                     "Connected to OPC UA server {Device} for PubSub",
                     deviceConfig.DeviceName);
@@ -431,6 +444,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 _log.LogError(ex,
                     "Connection failed for device {Device}",
                     deviceConfig.DeviceName);
+                ReportDevice(deviceConfig.DeviceName, ok: false, "Session Broken");
                 return null;
             }
         }

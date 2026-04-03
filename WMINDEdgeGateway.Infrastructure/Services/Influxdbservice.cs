@@ -5,18 +5,16 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using WMINDEdgeGateway.Application.DTOs;
 using WMINDEdgeGateway.Application.Interfaces;
+using WMINDEdgeGateway.Infrastructure.Diagnostics;
 
 namespace WMINDEdgeGateway.Infrastructure.Services
 {
-    /// <summary>
-    /// InfluxDB service implementation for writing telemetry data
-    /// Uses InfluxDB.Client library (InfluxDB 2.x compatible)
-    /// </summary>
     public class InfluxDbService : IInfluxDbService, IDisposable
     {
         private readonly ILogger<InfluxDbService> _log;
@@ -27,32 +25,23 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         public InfluxDbService(ILogger<InfluxDbService> log, IConfiguration config)
         {
             _log = log;
-
-            // Read InfluxDB configuration
             var url = config["InfluxDB:Url"] ?? "http://localhost:8087";
             var token = config["InfluxDB:Token"];
             _bucket = config["InfluxDB:Bucket"] ?? "SignalGateway";
             _org = config["InfluxDB:Org"] ?? "Wonderbiz";
 
             if (string.IsNullOrEmpty(token))
-            {
-                _log.LogWarning("InfluxDB token not configured. Service may fail to authenticate.");
-            }
+                _log.LogWarning("InfluxDB token not configured.");
 
-            // Initialize InfluxDB client with correct API
-            var options = new InfluxDBClientOptions(url)
-            {
-                Token = token,
-                Org = _org
-            };
-
+            var options = new InfluxDBClientOptions(url) { Token = token, Org = _org };
             _client = new InfluxDBClient(options);
 
             _log.LogInformation("InfluxDB client initialized: {Url}, Bucket: {Bucket}, Org: {Org}",
                 url, _bucket, _org);
         }
 
-        public async Task WriteAsync(IEnumerable<TelemetryPayload> payloads, CancellationToken cancellationToken = default)
+        public async Task WriteAsync(IEnumerable<TelemetryPayload> payloads,
+                                     CancellationToken cancellationToken = default)
         {
             if (payloads == null || !payloads.Any())
             {
@@ -60,34 +49,47 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                 return;
             }
 
+            // ── FIX: materialise list + start stopwatch BEFORE the try ────────
+            var payloadList = payloads.ToList();
+            var sw = Stopwatch.StartNew();
+            // ─────────────────────────────────────────────────────────────────
+
             try
             {
-                // GetWriteApiAsync returns the async write API (not IDisposable)
                 var writeApi = _client.GetWriteApiAsync();
 
-                // Convert TelemetryPayload to InfluxDB PointData
-                var points = payloads.Select(p => PointData
+                var points = payloadList.Select(p => PointData
                     .Measurement("modbus_telemetry")
                     .Tag("signal_id", p.SignalId)
                     .Field("value", p.Value)
                     .Timestamp(p.Timestamp, WritePrecision.Ms)
                 ).ToList();
 
-                // Write batch to InfluxDB
                 await writeApi.WritePointsAsync(points, _bucket, _org, cancellationToken);
 
-                //_log.LogDebug("Successfully wrote {Count} points to InfluxDB", points.Count);
+                // ── FIX: use payloadList and sw (now declared above) ──────────
+                sw.Stop();
+                double elapsed = sw.Elapsed.TotalSeconds;
+                double writeRate = elapsed > 0 ? payloadList.Count / elapsed : 0;
+
+                var s = GatewayDiagnosticsState.Instance.InfluxDbStatus;
+                s.State = "writing";
+                s.WriteRate = Math.Round(writeRate, 1);
+                s.LastWriteUtc = DateTime.UtcNow;
+                s.ErrorMessage = null;
+                // ─────────────────────────────────────────────────────────────
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, "Failed to write {Count} points to InfluxDB", payloads.Count());
+                var s = GatewayDiagnosticsState.Instance.InfluxDbStatus;
+                s.State = "error";
+                s.ErrorMessage = ex.Message;
+
+                _log.LogError(ex, "Failed to write {Count} points to InfluxDB", payloadList.Count);
                 throw;
             }
         }
 
-        public void Dispose()
-        {
-            _client?.Dispose();
-        }
+        public void Dispose() => _client?.Dispose();
     }
 }
