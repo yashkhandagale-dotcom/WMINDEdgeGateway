@@ -15,29 +15,26 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         private readonly IS3UploaderService _s3Uploader;
         private readonly IMemoryCacheService _cache;
 
-        //  Bounded queue (controls pressure)
         private readonly Channel<(byte[], FrameUploadMetadata)> _uploadChannel =
             Channel.CreateBounded<(byte[], FrameUploadMetadata)>(new BoundedChannelOptions(200)
             {
                 FullMode = BoundedChannelFullMode.DropWrite
             });
-            // the thread safe queue that will hold frames waiting to be uploaded. If the queue is full, new frames will be dropped to avoid memory issues.
-
-            // 200 frames at 85% JPEG quality is roughly ~50-100MB of memory. This acts as a buffer during upload spikes, but prevents OOM crashes if S3 is slow or unavailable.
-
-            // here camers is producer and uploader is consumer. If producer is faster than consumer, the queue will fill up and start dropping frames, which is a graceful degradation strategy.
-
-
 
         private readonly List<Task> _uploadWorkers = new();
+
+        //  Dynamic worker control
+        private int _currentWorkerCount = 0;
+        private readonly int _minWorkers = 3;
+        private readonly int _maxWorkers = 10;
 
         public CameraPollerHostedService(
             ILogger<CameraPollerHostedService> logger,
             IS3UploaderService s3Uploader,
             IMemoryCacheService cache)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _s3Uploader = s3Uploader ?? throw new ArgumentNullException(nameof(s3Uploader));
+            _logger = logger;
+            _s3Uploader = s3Uploader;
             _cache = cache;
         }
 
@@ -45,7 +42,7 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         {
             List<DeviceConfigurationDto>? cameraDevices = null;
 
-            // ── Wait for cache ─────────────────────────────
+            // Wait for cache
             while ((cameraDevices = _cache.Get<List<DeviceConfigurationDto>>("CameraDevices")) == null)
             {
                 _logger.LogWarning("CameraDevices not found in cache. Retrying...");
@@ -54,14 +51,16 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             _logger.LogInformation("Found {Count} camera device(s)", cameraDevices.Count);
 
-            // ── Start upload workers (limited concurrency) ─
-            int workerCount = 3;
-            for (int i = 0; i < workerCount; i++)
+            //  Start minimum workers
+            for (int i = 0; i < _minWorkers; i++)
             {
-                _uploadWorkers.Add(Task.Run(() => UploadWorker(ct), ct));
+                StartNewWorker(ct);
             }
 
-            // ── Start camera loops ─────────────────────────
+            //  Start dynamic scaler
+            _ = Task.Run(() => ScaleWorkers(ct), ct);
+
+            // Start camera loops
             var cameraTasks = cameraDevices
                 .Where(d => d.Cameras != null && d.Cameras.Count > 0)
                 .SelectMany(device =>
@@ -71,10 +70,54 @@ namespace WMINDEdgeGateway.Infrastructure.Services
 
             await Task.WhenAll(cameraTasks);
 
-            // ── Shutdown upload workers ────────────────────
+            // Shutdown
             _uploadChannel.Writer.Complete();
-            // signal to upload workers that no more frames will be added. They will finish processing the existing queue and then exit.
             await Task.WhenAll(_uploadWorkers);
+        }
+
+        // ────────────────────────────────────────────────
+        private void StartNewWorker(CancellationToken ct)
+        {
+            Interlocked.Increment(ref _currentWorkerCount);
+
+            var task = Task.Run(async () =>
+            {
+                _logger.LogInformation("Worker started. Total workers: {Count}", _currentWorkerCount);
+
+                try
+                {
+                    await UploadWorker(ct);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _currentWorkerCount);
+                    _logger.LogInformation("Worker stopped. Total workers: {Count}", _currentWorkerCount);
+                }
+            }, ct);
+
+            _uploadWorkers.Add(task);
+        }
+
+        // ────────────────────────────────────────────────
+        private async Task ScaleWorkers(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(2000, ct);
+
+                int queueSize = _uploadChannel.Reader.Count;
+
+                _logger.LogInformation("Queue size: {Queue}, Workers: {Workers}", queueSize, _currentWorkerCount);
+
+                // Scale UP
+                if (queueSize > 120 && _currentWorkerCount < _maxWorkers)
+                {
+                    _logger.LogWarning("High queue detected. Scaling UP workers...");
+                    StartNewWorker(ct);
+                }
+
+                //  No scale down (intentional for stability)
+            }
         }
 
         // ────────────────────────────────────────────────
@@ -85,7 +128,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
         {
             try
             {
-                // each camera runs in its own loop. If it crashes (e.g. stream error), we catch the exception, log it, and the loop will exit gracefully without affecting other cameras or the main service.
                 await PollCameraAsync(device, cam, ct);
             }
             catch (Exception ex)
@@ -103,19 +145,15 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             var fps = Math.Clamp(cam.Fps, 1, 30);
             var intervalMs = 1000 / fps;
 
-            _logger.LogInformation(
-                "Starting cam={CamId} ({Name}) at {Fps} FPS",
-                cam.CamId, cam.Name, fps);
+            _logger.LogInformation("Starting cam={CamId} at {Fps} FPS", cam.CamId, fps);
 
             VideoCapture? capture = null;
             int retryDelay = 2000;
-            int frameCount = 0;
 
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    // ── (Re)open stream ─────────────────────
                     if (capture == null || !capture.IsOpened())
                     {
                         capture?.Dispose();
@@ -127,7 +165,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         if (!capture.IsOpened())
                         {
                             _logger.LogWarning("Cannot open cam={CamId}, retrying...", cam.CamId);
-
                             await Task.Delay(retryDelay, ct);
                             retryDelay = Math.Min(retryDelay * 2, 30000);
                             continue;
@@ -150,7 +187,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         continue;
                     }
 
-                    // ── Encode JPEG ─────────────────────────
                     Cv2.ImEncode(".jpg", frame, out var jpegBytes,
                         new[] { new ImageEncodingParam(ImwriteFlags.JpegQuality, 85) });
 
@@ -166,26 +202,15 @@ namespace WMINDEdgeGateway.Infrastructure.Services
                         CapturedAt = DateTime.UtcNow
                     };
 
-                    //  enqueue or drop
+                    // enqueue or drop
                     if (!_uploadChannel.Writer.TryWrite((jpegBytes, metadata)))
                     {
                         _logger.LogWarning("Queue full → dropping frame cam={CamId}", cam.CamId);
                     }
 
-                    // ── FPS control ─────────────────────────
                     var delay = intervalMs - (int)sw.ElapsedMilliseconds;
                     if (delay > 0)
                         await Task.Delay(delay, ct);
-
-                    frameCount++;
-                    if (frameCount % 100 == 0)
-                    {
-                        _logger.LogInformation("Cam={CamId} processed 100 frames", cam.CamId);
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
                 }
                 catch (Exception ex)
                 {
@@ -205,7 +230,6 @@ namespace WMINDEdgeGateway.Infrastructure.Services
             {
                 try
                 {
-                    // each worker continuously reads from the queue and uploads frames to S3. If an upload fails, we log the error and continue with the next frame, ensuring that one failed upload doesn't stop the worker.
                     await _s3Uploader.UploadFrameAsync(bytes, metadata, ct);
                 }
                 catch (Exception ex)
